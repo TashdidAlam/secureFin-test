@@ -1,0 +1,232 @@
+# =============================================================================
+# SecureFin Platform - Terraform CI/CD Pipeline
+# =============================================================================
+# PURPOSE: Automated infrastructure deployment pipeline with branch-based
+# environment targeting and safety controls.
+#
+# ARCHITECTURE:
+# ────────────────────
+#   Single Terraform root (infra/terraform/) shared across all environments.
+#   Only tfvars and backend.hcl are environment-specific, located in:
+#     infra/terraform/environments/{dev,staging,production}/
+#
+# BRANCHING STRATEGY:
+# ────────────────────
+#   PR → dev         → Plan ONLY (validate infra changes before merge)
+#   PR → staging     → Plan ONLY (validate promotion to staging)
+#   PR → production  → Plan ONLY (validate production deployment)
+#   push → (future)  → Plan + Apply (requires ref-based FIC)
+#
+# AUTHENTICATION:
+# ────────────────────
+#   - OIDC via Workload Identity Federation (no stored secrets)
+#   - Azure identity values stored as GitHub repository variables:
+#       AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   - ARM_* environment variables auto-configure the AzureRM provider
+# =============================================================================
+
+name: "Terraform CI/CD - SecureFin Platform"
+
+# ---------------------------------------------------------------------------
+# Trigger Configuration
+# ---------------------------------------------------------------------------
+# WHY pull_request: The FIC (Federated Identity Credential) is configured
+# with subject type 'pull_request'. Only PR-triggered workflows produce an
+# OIDC token with subject 'repo:<owner>/<repo>:pull_request', which matches
+# the FIC.
+on:
+  pull_request:
+    branches:
+      - dev
+      - staging
+      - production
+    paths-ignore:
+      - "docs/**"
+
+# ---------------------------------------------------------------------------
+# Security: OIDC Token Permissions
+# ---------------------------------------------------------------------------
+permissions:
+  id-token: write
+  contents: read
+
+# ---------------------------------------------------------------------------
+# Concurrency Control
+# ---------------------------------------------------------------------------
+# Prevent parallel Terraform runs on the same environment. The group key
+# includes the branch name so different environments CAN run in parallel.
+concurrency:
+  group: terraform-${{ github.base_ref || github.ref_name }}
+  cancel-in-progress: false
+
+# ---------------------------------------------------------------------------
+# Global Environment Variables
+# ---------------------------------------------------------------------------
+# ARM_* variables are consumed by the AzureRM Terraform provider and backend.
+# Using repository variables (vars.*) instead of secrets because these are
+# non-sensitive GUIDs that identify the Azure federation target.
+env:
+  TF_VERSION: "1.5.0"
+  TF_WORKING_DIR: "infra/terraform"
+  ARM_USE_OIDC: "true"
+  ARM_USE_AZUREAD: "true"
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+jobs:
+  terraform:
+    name: "Terraform - ${{ github.base_ref || github.ref_name }}"
+    runs-on: ubuntu-latest
+
+    # -----------------------------------------------------------------------
+    # Environment Detection
+    # -----------------------------------------------------------------------
+    env:
+      EFFECTIVE_BRANCH: ${{ github.base_ref || github.ref_name }}
+      TF_ENVIRONMENT: ${{ (github.base_ref || github.ref_name) == 'production' && 'production' || (github.base_ref || github.ref_name) == 'staging' && 'staging' || 'dev' }}
+
+    steps:
+      # =====================================================================
+      # Step 1: Checkout Repository
+      # =====================================================================
+      - name: "Checkout repository"
+        uses: actions/checkout@v4
+
+      # =====================================================================
+      # Step 2: Detect Environment Configuration
+      # =====================================================================
+      # Resolves environment-specific file paths. All Terraform commands run
+      # from infra/terraform/ — only the backend.hcl and tfvars differ.
+      - name: "Detect environment and set paths"
+        id: env-config
+        run: |
+          echo "=== Event: ${{ github.event_name }} ==="
+          echo "=== PR Target Branch: ${{ env.EFFECTIVE_BRANCH }} ==="
+          echo "=== Source Branch: ${{ github.head_ref || github.ref_name }} ==="
+          echo "=== Resolved Environment: ${{ env.TF_ENVIRONMENT }} ==="
+
+          # Environment-specific files live under environments/{env}/
+          BACKEND_HCL="environments/${{ env.TF_ENVIRONMENT }}/backend.hcl"
+          TFVARS_FILE="environments/${{ env.TF_ENVIRONMENT }}/${{ env.TF_ENVIRONMENT }}.tfvars"
+
+          echo "backend_hcl=${BACKEND_HCL}" >> "$GITHUB_OUTPUT"
+          echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
+
+          # Apply is ONLY allowed on push events (post-merge).
+          # PRs always run plan-only.
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "apply_allowed=true" >> "$GITHUB_OUTPUT"
+            echo "=== Apply: ALLOWED (push event) ==="
+          else
+            echo "apply_allowed=false" >> "$GITHUB_OUTPUT"
+            echo "=== Apply: BLOCKED (pull_request — plan only) ==="
+          fi
+
+          echo "=== Backend Config: ${BACKEND_HCL} ==="
+          echo "=== Tfvars File: ${TFVARS_FILE} ==="
+
+      # =====================================================================
+      # Step 3: Setup Terraform
+      # =====================================================================
+      - name: "Setup Terraform ${{ env.TF_VERSION }}"
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # =====================================================================
+      # Step 4: Azure Login via OIDC
+      # =====================================================================
+      # Exchanges the GitHub-issued JWT for an Azure AD access token.
+      # Values come from GitHub repository variables (not secrets).
+      - name: "Azure Login (OIDC)"
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # =====================================================================
+      # Step 5: Terraform Format Check
+      # =====================================================================
+      # Checks all .tf files recursively (root config + modules).
+      - name: "Terraform Format Check"
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check -recursive
+
+      # =====================================================================
+      # Step 5a: TFLint — Terraform Linter
+      # =====================================================================
+      # Catches errors that `terraform validate` misses: missing provider
+      # version constraints, invalid Azure SKUs, deprecated attributes, etc.
+      - name: "Setup TFLint"
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: "v0.61.0"
+
+      - name: "TFLint Init (download rulesets)"
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: tflint --init --config "${{ github.workspace }}/.tflint.hcl"
+
+      - name: "TFLint — Lint Check"
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: tflint --config "${{ github.workspace }}/.tflint.hcl" --format compact
+
+      # =====================================================================
+      # Step 5b: Checkov — Infrastructure Security Scanner
+      # =====================================================================
+      # Static analysis for security misconfigurations (CIS Azure, PCI-DSS,
+      # SOC2). Running in soft-fail advisory mode during initial adoption.
+      - name: "Checkov — Security & Compliance Scan"
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ env.TF_WORKING_DIR }}
+          framework: terraform
+          soft_fail: true
+          compact: true
+          quiet: true
+
+      # =====================================================================
+      # Step 6: Terraform Init
+      # =====================================================================
+      # Initializes providers and configures the remote backend using the
+      # environment-specific backend.hcl file.
+      - name: "Terraform Init"
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -backend-config=${{ steps.env-config.outputs.backend_hcl }}
+
+      # =====================================================================
+      # Step 7: Terraform Validate
+      # =====================================================================
+      - name: "Terraform Validate"
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      # =====================================================================
+      # Step 8: Terraform Plan
+      # =====================================================================
+      # Uses the environment-specific tfvars file. Saves plan to file so
+      # apply can execute exactly what was planned.
+      - name: "Terraform Plan"
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          echo "=== Planning for environment: ${{ env.TF_ENVIRONMENT }} ==="
+          echo "=== Using tfvars: ${{ steps.env-config.outputs.tfvars_file }} ==="
+          terraform plan \
+            -var-file=${{ steps.env-config.outputs.tfvars_file }} \
+            -out=tfplan \
+            -input=false
+
+      # =====================================================================
+      # Step 9: Terraform Apply (Protected Branches Only)
+      # =====================================================================
+      # Apply is ONLY allowed on push events (post-merge). PRs are always
+      # plan-only. This requires a ref-based FIC in Azure AD.
+      - name: "Terraform Apply"
+        if: steps.env-config.outputs.apply_allowed == 'true'
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          echo "=== Applying to environment: ${{ env.TF_ENVIRONMENT }} ==="
+          echo "=== Branch: ${{ env.EFFECTIVE_BRANCH }} ==="
+          echo "=== CAUTION: This will modify real infrastructure ==="
+          terraform apply -auto-approve tfplan
