@@ -37,8 +37,9 @@ resource "random_id" "suffix" {
 locals {
   # WHY: Consistent naming convention across all bootstrap resources
   name_prefix = "${var.project}-state"
-  # Storage account names: 3-24 chars, lowercase alphanumeric only
-  storage_account_name = "st${var.project}tfstate${random_id.suffix.hex}"
+  # Storage account names: max 24 chars, lowercase alphanumeric only
+  # st(2) + project(7) + tfstate(7) + hex(8) = 24
+  storage_account_name = "st${substr(lower(var.project), 0, 7)}tfstate${random_id.suffix.hex}"
 
   tags = {
     Project     = "SecureFin"
@@ -80,7 +81,7 @@ resource "azurerm_user_assigned_identity" "state_cmk" {
 # 3. Azure Key Vault - Secure key storage for CMK
 # =============================================================================
 # WHY Key Vault:
-#   - FIPS 140-2 Level 2 validated HSM backing
+#   - FIPS 140-2 Level 2 validated (software-protected keys at Standard SKU)
 #   - Full audit trail of key operations via Azure Monitor
 #   - RBAC-based access control (no vault access policies)
 
@@ -88,7 +89,8 @@ resource "azurerm_user_assigned_identity" "state_cmk" {
 data "azurerm_client_config" "current" {}
 
 resource "azurerm_key_vault" "state" {
-  name                = "kv-${var.project}-state-${random_id.suffix.hex}"
+  # Key Vault names: max 24 chars — kv-(3)+project(5)+-state-(7)+hex(8)=23
+  name                = "kv-${substr(lower(var.project), 0, 5)}-state-${random_id.suffix.hex}"
   location            = azurerm_resource_group.state.location
   resource_group_name = azurerm_resource_group.state.name
   tenant_id           = data.azurerm_client_config.current.tenant_id
@@ -238,11 +240,20 @@ resource "azurerm_storage_container" "tfstate" {
 # =============================================================================
 # 7. RBAC - Grant CI/CD identity access to state storage
 # =============================================================================
-# WHY Storage Blob Data Contributor: This is the minimum role that allows
-# Terraform to read, write, and delete state blobs. The CI/CD service
-# principal (via OIDC) uses this role.
+# WHY Storage Blob Data Contributor: Grants the bootstrap operator (the
+# identity running this Terraform) access to manage state blobs.
 resource "azurerm_role_assignment" "deployer_blob_contributor" {
   scope                = azurerm_storage_account.tfstate.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = data.azurerm_client_config.current.object_id
+}
+
+# WHY: The CI/CD service principal (via OIDC) is a DIFFERENT identity from
+# the bootstrap operator. It needs its own Storage Blob Data Contributor
+# role to read, write, and delete state blobs during pipeline runs.
+resource "azurerm_role_assignment" "cicd_blob_contributor" {
+  count                = var.cicd_principal_id != "" ? 1 : 0
+  scope                = azurerm_storage_account.tfstate.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = var.cicd_principal_id
 }

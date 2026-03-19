@@ -6,16 +6,17 @@
 #
 # BRANCHING STRATEGY:
 # ────────────────────
-#   dev-*        → Feature branches → Plan ONLY (no apply) → uses dev.tfvars
-#   dev          → Development env  → Plan + Apply          → uses dev.tfvars
-#   staging      → Staging env      → Plan + Apply          → uses staging.tfvars
-#   production   → Production env   → Plan + Apply          → uses production.tfvars
+#   PR → dev         → Plan ONLY (validate infra changes before merge)
+#   PR → staging     → Plan ONLY (validate promotion to staging)
+#   PR → production  → Plan ONLY (validate production deployment)
+#   push to dev/staging/production → Plan + Apply (requires ref-based FIC)
 #
 # SECURITY:
 # ────────────────────
 #   - OIDC authentication (no secrets stored in GitHub)
+#   - FIC subject type: pull_request (matches PR-triggered workflows)
 #   - Path filtering ensures only infra changes trigger the pipeline
-#   - Feature branches can NEVER run apply (enforced by conditional logic)
+#   - PRs can NEVER run apply (plan-only; apply requires push event + ref FIC)
 #
 # PATH FILTERING:
 # ────────────────────
@@ -28,27 +29,27 @@ name: "Terraform CI/CD - SecureFin Platform"
 # ---------------------------------------------------------------------------
 # Trigger Configuration
 # ---------------------------------------------------------------------------
-# WHY push (not pull_request): The branching strategy uses direct pushes to
-# dev and merges to staging/production. Feature branches (dev-*) push triggers
-# run plan-only validation.
+# WHY pull_request: The FIC (Federated Identity Credential) is configured
+# with subject type 'pull_request'. Only PR-triggered workflows produce an
+# OIDC token with subject 'repo:<owner>/<repo>:pull_request', which matches
+# the FIC. Push events produce 'ref:refs/heads/<branch>' subjects that
+# would fail Azure Login.
 #
-# WHY path filtering: Infrastructure changes live exclusively under
-# infra/terraform/. Documentation changes (docs/**) must NOT trigger
+# WHY branches filter: PRs targeting dev, staging, or production trigger
+# the pipeline. A PR from dev-initial-build → dev matches because the
+# base (target) branch is dev.
+#
+# WHY path filtering: Documentation changes (docs/**) must NOT trigger
 # expensive Terraform operations. The paths-ignore ensures docs-only
 # commits are completely silent.
 on:
-  push:
+  pull_request:
     branches:
       - dev
-      - "dev-*"       # Feature branches: dev-feature-login, dev-fix-network, etc.
       - staging
       - production
     paths-ignore:
       - "docs/**"
-    # WHY paths-ignore for docs: The pipeline triggers on ALL code changes
-    # EXCEPT documentation-only changes. This ensures workflow updates,
-    # tflint config, bootstrap changes, etc. all trigger the pipeline.
-    # Only pure docs/ changes are silently ignored.
 
 # ---------------------------------------------------------------------------
 # Security: OIDC Token Permissions
@@ -67,8 +68,8 @@ permissions:
 # applies can corrupt state or cause resource conflicts. The group key
 # includes the branch name so different environments CAN run in parallel.
 concurrency:
-  group: terraform-${{ github.ref_name }}
-  cancel-in-progress: false  # WHY: Never cancel an in-progress apply
+  group: terraform-${{ github.base_ref || github.ref_name }}
+  cancel-in-progress: false  # WHY: Never cancel an in-progress plan/apply
 
 # ---------------------------------------------------------------------------
 # Environment Variables
@@ -82,26 +83,25 @@ env:
 
 jobs:
   terraform:
-    name: "Terraform - ${{ github.ref_name }}"
+    name: "Terraform - ${{ github.base_ref || github.ref_name }}"
     runs-on: ubuntu-latest
 
     # -----------------------------------------------------------------------
     # Environment Detection
     # -----------------------------------------------------------------------
-    # WHY: Map branch names to environment names and tfvars files.
-    # Feature branches (dev-*) map to the dev environment for plan validation.
-    # This is a CRITICAL safety mechanism: feature branches use dev config
-    # but can NEVER apply changes.
+    # WHY: Map the PR target branch to the correct environment and tfvars.
+    # github.base_ref = the branch the PR targets (e.g., dev, staging, production).
+    # Falls back to github.ref_name for push events (future use).
     env:
       # WHY conditional: Determines which environment directory and tfvars
-      # file to use based on the branch that triggered the pipeline.
+      # file to use based on the PR target branch.
       #
-      # Logic:
-      #   - production branch  → production environment
-      #   - staging branch     → staging environment
-      #   - dev branch         → dev environment
-      #   - dev-* branches     → dev environment (plan only)
-      TF_ENVIRONMENT: ${{ github.ref_name == 'production' && 'production' || github.ref_name == 'staging' && 'staging' || 'dev' }}
+      # Logic (pull_request events):
+      #   - PR → production   → production environment
+      #   - PR → staging      → staging environment
+      #   - PR → dev          → dev environment
+      EFFECTIVE_BRANCH: ${{ github.base_ref || github.ref_name }}
+      TF_ENVIRONMENT: ${{ (github.base_ref || github.ref_name) == 'production' && 'production' || (github.base_ref || github.ref_name) == 'staging' && 'staging' || 'dev' }}
 
     steps:
       # =====================================================================
@@ -125,7 +125,9 @@ jobs:
       - name: "Detect environment and set paths"
         id: env-config
         run: |
-          echo "=== Branch: ${{ github.ref_name }} ==="
+          echo "=== Event: ${{ github.event_name }} ==="
+          echo "=== PR Target Branch: ${{ env.EFFECTIVE_BRANCH }} ==="
+          echo "=== Source Branch: ${{ github.head_ref || github.ref_name }} ==="
           echo "=== Resolved Environment: ${{ env.TF_ENVIRONMENT }} ==="
 
           # Set the working directory to the environment-specific Terraform config
@@ -136,15 +138,15 @@ jobs:
           TFVARS_FILE="${WORK_DIR}/${{ env.TF_ENVIRONMENT }}.tfvars"
           echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
 
-          # Determine if apply is allowed on this branch
-          # WHY: Feature branches (dev-*) must NEVER apply. Only the exact
-          # branch names dev, staging, production are allowed to apply.
-          if [[ "${{ github.ref_name }}" == "dev" || "${{ github.ref_name }}" == "staging" || "${{ github.ref_name }}" == "production" ]]; then
+          # Determine if apply is allowed
+          # WHY: Apply is ONLY allowed on push events to protected branches.
+          # PRs always run plan-only. This is enforced by event type check.
+          if [[ "${{ github.event_name }}" == "push" ]]; then
             echo "apply_allowed=true" >> "$GITHUB_OUTPUT"
-            echo "=== Apply: ALLOWED ==="
+            echo "=== Apply: ALLOWED (push event) ==="
           else
             echo "apply_allowed=false" >> "$GITHUB_OUTPUT"
-            echo "=== Apply: BLOCKED (feature branch) ==="
+            echo "=== Apply: BLOCKED (pull_request — plan only) ==="
           fi
 
           echo "=== Working Directory: ${WORK_DIR} ==="
@@ -192,9 +194,11 @@ jobs:
       # only reports violations and exits non-zero if formatting issues exist.
       #
       # WHY -recursive: Checks all .tf files in the working directory and
-      # subdirectories, catching formatting issues in module references too.
+      # subdirectories, including shared modules and all environments.
+      # WHY infra/terraform: Running from the root Terraform directory (not
+      # the env subdirectory) ensures modules are also format-checked.
       - name: "Terraform Format Check"
-        working-directory: ${{ steps.env-config.outputs.tf_working_dir }}
+        working-directory: infra/terraform
         run: terraform fmt -check -recursive
 
       # =====================================================================
@@ -252,7 +256,7 @@ jobs:
       - name: "Checkov — Security & Compliance Scan"
         uses: bridgecrewio/checkov-action@v12
         with:
-          directory: ${{ steps.env-config.outputs.tf_working_dir }}
+          directory: infra/terraform
           framework: terraform
           soft_fail: true
           compact: true
@@ -333,11 +337,11 @@ jobs:
       # Step 9: Terraform Apply (Protected Branches Only)
       # =====================================================================
       # WHY conditional: This is the MOST CRITICAL safety control in the
-      # pipeline. Apply is ONLY allowed when:
-      #   1. The branch is dev, staging, or production (not dev-*)
-      #   2. The apply_allowed flag was set in Step 2
+      # pipeline. Apply is ONLY allowed on push events (post-merge).
+      # Pull requests ALWAYS run plan-only. This requires a ref-based FIC
+      # to be configured in Azure AD for push events to authenticate.
       #
-      # INTERVIEW NOTE: This demonstrates the "plan on all, apply on few"
+      # INTERVIEW NOTE: This demonstrates the "plan on PR, apply on merge"
       # pattern — the gold standard for Terraform CI/CD safety.
       #
       # WHY -auto-approve: The plan was already generated and saved in Step 8.
@@ -357,6 +361,6 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           echo "=== Applying to environment: ${{ env.TF_ENVIRONMENT }} ==="
-          echo "=== Branch: ${{ github.ref_name }} ==="
+          echo "=== Branch: ${{ env.EFFECTIVE_BRANCH }} ==="
           echo "=== CAUTION: This will modify real infrastructure ==="
           terraform apply -auto-approve tfplan

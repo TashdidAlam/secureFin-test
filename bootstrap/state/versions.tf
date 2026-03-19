@@ -26,9 +26,8 @@ terraform {
   }
 }
 
-# WHY use_oidc: Even in bootstrap, we authenticate via Workload Identity (OIDC)
-# to ensure zero secrets are used anywhere in the pipeline. The operator running
-# bootstrap must have federated credentials configured.
+# WHY use_oidc variable: Defaults to false for local CLI runs (uses az login).
+# Set to true in CI/CD pipelines for OIDC/Workload Identity authentication.
 provider "azurerm" {
   features {
     key_vault {
@@ -39,7 +38,7 @@ provider "azurerm" {
     }
   }
 
-  use_oidc        = true
+  use_oidc        = var.use_oidc
   subscription_id = var.subscription_id
   tenant_id       = var.tenant_id
   client_id       = var.client_id

@@ -19,7 +19,6 @@ locals {
 
   # WHY merge: Allows resource-specific tags (e.g., "Service = AKS") to be
   # added without duplicating the base tags in every resource block.
-  # additional_tags is merged AFTER mandatory, so mandatory tags cannot be
-  # accidentally overridden.
-  tags = merge(local.mandatory_tags, var.additional_tags)
+  # Mandatory tags are merged LAST so they always win on key conflicts.
+  tags = merge(var.additional_tags, local.mandatory_tags)
 }

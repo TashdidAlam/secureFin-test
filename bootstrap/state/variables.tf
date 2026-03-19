@@ -42,3 +42,15 @@ variable "project" {
   type        = string
   default     = "securefin"
 }
+
+variable "use_oidc" {
+  description = "Use OIDC for Azure authentication (true for CI/CD, false for local CLI runs)"
+  type        = bool
+  default     = false
+}
+
+variable "cicd_principal_id" {
+  description = "Object ID of the CI/CD service principal for Storage Blob Data Contributor access. Leave empty if not yet known."
+  type        = string
+  default     = ""
+}
