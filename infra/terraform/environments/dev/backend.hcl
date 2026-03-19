@@ -7,15 +7,17 @@
 # specific and should not be hardcoded in backend.tf. Using -backend-config
 # allows the CI/CD pipeline to inject the correct values per environment.
 #
-# NOTE: Replace these values with the outputs from the bootstrap layer.
-# After running bootstrap, use:
-#   terraform -chdir=bootstrap/state output storage_account_name
-#   terraform -chdir=bootstrap/state output resource_group_name
+# PREREQUISITE: The storage account and container must be created BEFORE
+# running this pipeline. The state backend lives in a dedicated resource
+# group, separate from the application infrastructure.
 #
-# SECURITY: CMK encryption is enforced at the storage account level.
-# All state files are encrypted with the Customer Managed Key automatically.
+# SECURITY: Enable Azure AD RBAC-only access on the storage account
+# (shared_access_key_enabled = false) and grant the CI/CD service principal
+# the "Storage Blob Data Contributor" role.
 # =============================================================================
 
-resource_group_name  = "rg-securefin-state-eastus2"
-storage_account_name = "stsecurefintfstateXXXX"
+# Per-environment state backend values. Change storage_account_name here
+# if a different environment needs its own dedicated storage account.
+resource_group_name  = "rg-securefin-tfstate"
+storage_account_name = "tashdidstatebackup68"
 container_name       = "tfstate"

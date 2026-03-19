@@ -8,20 +8,14 @@
 # Workload Identity. No storage account keys are ever used.
 #
 # WHY use_azuread_auth = true: Forces all storage operations through Azure AD
-# RBAC instead of shared key authentication. Combined with the storage account's
-# shared_access_key_enabled = false (set in bootstrap), this creates a
-# zero-shared-key architecture.
+# RBAC instead of shared key authentication. The storage account must have
+# shared_access_key_enabled = false for a zero-shared-key architecture.
 #
-# WHY backend.hcl: Sensitive backend values (storage account name, resource
-# group) are externalized to a .hcl file and passed at init time via:
+# WHY backend.hcl: The backend values (storage account name, resource group,
+# container) are passed at init time via:
 #   terraform init -backend-config=backend.hcl
-# This keeps the backend block clean and avoids hardcoding environment-specific
-# values in tracked Terraform files.
-#
-# SECURITY NOTE: CMK encryption is enforced at the storage account level
-# (configured in the bootstrap layer). Every blob written to this container
-# — including tfstate files — is automatically encrypted with the Customer
-# Managed Key. No additional configuration is needed here.
+# The storage account is pre-created in a dedicated resource group, separate
+# from the application infrastructure managed by this Terraform code.
 # =============================================================================
 
 terraform {
