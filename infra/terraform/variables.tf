@@ -1,21 +1,11 @@
 # =============================================================================
-# Dev Environment - Variables
+# SecureFin Platform - Variables
 # =============================================================================
-
-variable "subscription_id" {
-  description = "Azure subscription ID"
-  type        = string
-}
-
-variable "tenant_id" {
-  description = "Azure AD tenant ID"
-  type        = string
-}
-
-variable "client_id" {
-  description = "Service principal client ID (OIDC federated)"
-  type        = string
-}
+# Azure identity values (subscription_id, tenant_id, client_id) are NOT
+# Terraform variables. They are passed via ARM_* environment variables
+# which the AzureRM provider and backend read automatically:
+#   ARM_CLIENT_ID, ARM_TENANT_ID, ARM_SUBSCRIPTION_ID
+# =============================================================================
 
 variable "environment" {
   description = "Environment name (dev, staging, production)"

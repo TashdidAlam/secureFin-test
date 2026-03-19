@@ -9,59 +9,86 @@ Production-grade Terraform infrastructure and CI/CD pipeline for the SecureFin f
 - Terraform >= 1.5.0
 - Azure CLI
 - An Azure AD App Registration with OIDC federated credentials for GitHub Actions
-- A GitHub repository with the following secrets configured:
-  - `AZURE_CLIENT_ID_PLAN`
-  - `AZURE_TENANT_ID`
-  - `AZURE_SUBSCRIPTION_ID`
+- A GitHub repository with the following **repository variables** configured:
+  - `AZURE_CLIENT_ID` — `93ec5cf8-4518-461f-96a6-b44fccf4a456`
+  - `AZURE_TENANT_ID` — `63a9a134-4fad-44e4-a0cf-fd45d4185168`
+  - `AZURE_SUBSCRIPTION_ID` — `48eeedd2-fbbe-4c61-803d-2a8ba099bf0b`
 
-### 1. Bootstrap State Backend
+### 1. Configure GitHub Repository Variables
 
-The bootstrap layer provisions the remote state infrastructure (Storage Account with CMK encryption via Key Vault). Run this **once** before any other Terraform operations:
+In your GitHub repository: **Settings → Secrets and variables → Actions → Variables tab**
 
-```bash
-cd bootstrap/state
-
-# Update terraform.tfvars with your Azure identifiers
-terraform init
-terraform plan -var-file=terraform.tfvars
-terraform apply -var-file=terraform.tfvars
-
-# Capture outputs for backend.hcl files
-terraform output
-```
-
-Update `backend.hcl` in each environment (`infra/terraform/environments/{dev,staging,production}/`) with the bootstrap outputs.
-
-### 2. Configure GitHub Secrets
-
-In your GitHub repository settings, add:
-
-| Secret | Description |
-|--------|-------------|
-| `AZURE_CLIENT_ID_PLAN` | App Registration client ID with OIDC federation |
+| Variable | Value |
+|----------|-------|
+| `AZURE_CLIENT_ID` | App Registration client ID (OIDC federation) |
 | `AZURE_TENANT_ID` | Azure AD tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Target Azure subscription ID |
 
-### 3. Push and Deploy
+> **Note**: These are **repository variables**, not secrets. They are non-sensitive GUIDs.
+
+### 2. Ensure State Backend Exists
+
+The state backend must exist before running the pipeline:
 
 ```bash
-# Feature branch — plan only
-git checkout -b dev-feature-login
-git push origin dev-feature-login
+# Verify storage account and container exist
+az storage container show \
+  --name tfstate \
+  --account-name tashdidstatebackup68 \
+  --auth-mode login
 
-# Dev — plan + apply
-git checkout dev
-git push origin dev
+# Ensure the CI/CD service principal has Storage Blob Data Contributor
+az role assignment create \
+  --assignee 93ec5cf8-4518-461f-96a6-b44fccf4a456 \
+  --role "Storage Blob Data Contributor" \
+  --scope $(az storage account show --name tashdidstatebackup68 --resource-group rg-securefin-tfstate --query id -o tsv)
+```
 
-# Staging — plan + apply
-git checkout staging
-git merge dev
-git push origin staging
+### 3. Deploy via PR
 
-# Production — plan + apply
-git checkout production
-git merge staging
-git push origin production
+```bash
+# Feature branch — open PR to dev for plan-only
+git checkout -b feature-login
+# Make changes to infra/terraform/
+git push origin feature-login
+# Open PR targeting dev → pipeline runs plan
+
+# After review, merge to dev
+# (Apply requires push-triggered FIC — see docs/ARCHITECTURE.md)
+```
+
+### 4. Local Development
+
+```bash
+az login
+cd infra/terraform
+terraform init -backend-config=environments/dev/backend.hcl
+terraform plan -var-file=environments/dev/dev.tfvars
+```
+
+## Project Structure
+
+```
+infra/terraform/
+├── main.tf               # Shared configuration (all environments)
+├── variables.tf          # Shared variable declarations
+├── outputs.tf            # Shared outputs
+├── providers.tf          # AzureRM provider (auth via ARM_* env vars)
+├── versions.tf           # Terraform & provider version pins
+├── backend.tf            # Backend config (values injected via backend.hcl)
+├── modules/
+│   ├── tags/             # Mandatory tagging strategy
+│   └── resource-group/   # Resource group with naming enforcement
+└── environments/
+    ├── dev/
+    │   ├── backend.hcl   # State backend values + key
+    │   └── dev.tfvars    # Dev variable values
+    ├── staging/
+    │   ├── backend.hcl
+    │   └── staging.tfvars
+    └── production/
+        ├── backend.hcl
+        └── production.tfvars
 ```
 
 ## Architecture
@@ -71,10 +98,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full architecture documenta
 ## Security
 
 - **OIDC authentication** — no client secrets, certificates, or storage keys
-- **CMK encryption** — Terraform state encrypted with Customer Managed Key
 - **Azure AD-only storage access** — shared access keys disabled
 - **RBAC authorization** — Key Vault and Storage use Azure RBAC, not access policies
-- **Branch-based safety** — feature branches can never run `terraform apply`
+- **Branch-based safety** — PRs can never run `terraform apply`
 - **TFLint** — Azure-aware linting with `tflint-ruleset-azurerm` in CI pipeline
 - **Checkov** — Static IaC security scanner (CIS Azure, PCI-DSS, SOC2) in CI pipeline
 

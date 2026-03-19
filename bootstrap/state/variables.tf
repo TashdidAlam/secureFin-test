@@ -23,7 +23,7 @@ variable "client_id" {
 variable "location" {
   description = "Azure region for all bootstrap resources"
   type        = string
-  default     = "eastus2"
+  default     = "eastus3"
 
   validation {
     condition     = can(regex("^[a-z]+[a-z0-9]*$", var.location))

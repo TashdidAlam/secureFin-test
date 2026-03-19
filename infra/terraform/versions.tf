@@ -1,9 +1,8 @@
 # =============================================================================
-# Dev Environment - Terraform & Provider Versions
+# SecureFin Platform - Terraform & Provider Versions
 # =============================================================================
-# WHY pin versions: Terraform and provider version drift between environments
-# is the #1 cause of "works in dev, breaks in prod" issues. Pinning ensures
-# identical behavior across all environments.
+# WHY pin versions: Version drift between environments is the #1 cause of
+# "works in dev, breaks in prod" issues. Pinning ensures identical behavior.
 #
 # WHY >= 1.5.0: Terraform 1.5+ introduced the `check` block, improved
 # import workflows, and critical bug fixes for Azure backends.

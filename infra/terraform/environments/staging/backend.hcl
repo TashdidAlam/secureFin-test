@@ -12,8 +12,7 @@
 # the "Storage Blob Data Contributor" role.
 # =============================================================================
 
-# Per-environment state backend values. Change storage_account_name here
-# if staging needs its own dedicated storage account.
 resource_group_name  = "rg-securefin-tfstate"
 storage_account_name = "tashdidstatebackup68"
 container_name       = "tfstate"
+key                  = "staging.terraform.tfstate"

@@ -1,8 +1,5 @@
 # =============================================================================
-# Dev Environment - Outputs
-# =============================================================================
-# WHY: Outputs expose the created resource identifiers for downstream
-# consumers (other Terraform workspaces, scripts, or CI/CD steps).
+# SecureFin Platform - Outputs
 # =============================================================================
 
 output "core_resource_group_name" {
