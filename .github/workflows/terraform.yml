@@ -2,7 +2,7 @@
 # SecureFin Platform - Terraform CI/CD Pipeline
 # =============================================================================
 # PURPOSE: Automated infrastructure deployment pipeline with branch-based
-# environment targeting and safety controls.
+# environment targeting, manual approval gates, and safety controls.
 #
 # ARCHITECTURE:
 # ────────────────────
@@ -10,10 +10,18 @@
 #   Only tfvars and backend.hcl are environment-specific, located in:
 #     infra/terraform/environments/{dev,staging,production}/
 #
+# JOB DESIGN:
+# ────────────────────
+#   Job 1 — plan:   Lint, scan, init, validate, plan (runs on every trigger)
+#   Job 2 — apply:  Downloads plan artifact, applies (push events only)
+#
+#   The apply job is gated by a GitHub Environment with required reviewers.
+#   This enforces manual approval before any infrastructure changes.
+#
 # BRANCHING STRATEGY:
 # ────────────────────
 #   PR → dev/staging/production  → Plan ONLY (validate before merge)
-#   push → dev/staging/production → Plan + Apply (post-merge deployment)
+#   push → dev/staging/production → Plan + Apply (post-merge, with approval)
 #
 # AUTHENTICATION:
 # ────────────────────
@@ -28,6 +36,12 @@
 #   2. Subject: repo:TashdidAlam/secureFin-test:ref:refs/heads/dev  (for dev apply)
 #   3. Subject: repo:TashdidAlam/secureFin-test:ref:refs/heads/staging  (for staging apply)
 #   4. Subject: repo:TashdidAlam/secureFin-test:ref:refs/heads/production  (for prod apply)
+#
+# GITHUB ENVIRONMENTS (create in Repo → Settings → Environments):
+# ────────────────────
+#   dev         — no required reviewers (auto-apply on push)
+#   staging     — 1 required reviewer
+#   production  — 1-2 required reviewers + optional wait timer
 # =============================================================================
 
 name: "Terraform CI/CD - SecureFin Platform"
@@ -85,9 +99,14 @@ env:
   ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+# ==========================================================================
+# JOB 1: PLAN — Lint, Scan, Init, Validate, Plan
+# ==========================================================================
+# Runs on EVERY trigger (PR + push). Produces a plan artifact for the apply
+# job to consume. This job does NOT modify any infrastructure.
 jobs:
-  terraform:
-    name: "Terraform - ${{ github.base_ref || github.ref_name }}"
+  plan:
+    name: "Plan - ${{ github.base_ref || github.ref_name }}"
     runs-on: ubuntu-latest
 
     # -----------------------------------------------------------------------
@@ -96,6 +115,13 @@ jobs:
     env:
       EFFECTIVE_BRANCH: ${{ github.base_ref || github.ref_name }}
       TF_ENVIRONMENT: ${{ (github.base_ref || github.ref_name) == 'production' && 'production' || (github.base_ref || github.ref_name) == 'staging' && 'staging' || 'dev' }}
+
+    # -----------------------------------------------------------------------
+    # Outputs — pass values to the apply job
+    # -----------------------------------------------------------------------
+    outputs:
+      tf_environment: ${{ env.TF_ENVIRONMENT }}
+      apply_allowed: ${{ steps.env-config.outputs.apply_allowed }}
 
     steps:
       # =====================================================================
@@ -107,8 +133,6 @@ jobs:
       # =====================================================================
       # Step 2: Detect Environment Configuration
       # =====================================================================
-      # Resolves environment-specific file paths. All Terraform commands run
-      # from infra/terraform/ — only the backend.hcl and tfvars differ.
       - name: "Detect environment and set paths"
         id: env-config
         run: |
@@ -117,15 +141,12 @@ jobs:
           echo "=== Source Branch: ${{ github.head_ref || github.ref_name }} ==="
           echo "=== Resolved Environment: ${{ env.TF_ENVIRONMENT }} ==="
 
-          # Environment-specific files live under environments/{env}/
           BACKEND_HCL="environments/${{ env.TF_ENVIRONMENT }}/backend.hcl"
           TFVARS_FILE="environments/${{ env.TF_ENVIRONMENT }}/${{ env.TF_ENVIRONMENT }}.tfvars"
 
           echo "backend_hcl=${BACKEND_HCL}" >> "$GITHUB_OUTPUT"
           echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
 
-          # Apply is ONLY allowed on push events (post-merge).
-          # PRs always run plan-only.
           if [[ "${{ github.event_name }}" == "push" ]]; then
             echo "apply_allowed=true" >> "$GITHUB_OUTPUT"
             echo "=== Apply: ALLOWED (push event) ==="
@@ -148,8 +169,6 @@ jobs:
       # =====================================================================
       # Step 4: Azure Login via OIDC
       # =====================================================================
-      # Exchanges the GitHub-issued JWT for an Azure AD access token.
-      # Values come from GitHub repository variables (not secrets).
       - name: "Azure Login (OIDC)"
         uses: azure/login@v2
         with:
@@ -160,7 +179,6 @@ jobs:
       # =====================================================================
       # Step 5: Terraform Format Check
       # =====================================================================
-      # Checks all .tf files recursively (root config + modules).
       - name: "Terraform Format Check"
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform fmt -check -recursive
@@ -168,8 +186,6 @@ jobs:
       # =====================================================================
       # Step 5a: TFLint — Terraform Linter
       # =====================================================================
-      # Catches errors that `terraform validate` misses: missing provider
-      # version constraints, invalid Azure SKUs, deprecated attributes, etc.
       - name: "Setup TFLint"
         uses: terraform-linters/setup-tflint@v4
         with:
@@ -186,8 +202,6 @@ jobs:
       # =====================================================================
       # Step 5b: Checkov — Infrastructure Security Scanner
       # =====================================================================
-      # Static analysis for security misconfigurations (CIS Azure, PCI-DSS,
-      # SOC2). Running in soft-fail advisory mode during initial adoption.
       - name: "Checkov — Security & Compliance Scan"
         uses: bridgecrewio/checkov-action@v12
         with:
@@ -200,8 +214,6 @@ jobs:
       # =====================================================================
       # Step 6: Terraform Init
       # =====================================================================
-      # Initializes providers and configures the remote backend using the
-      # environment-specific backend.hcl file.
       - name: "Terraform Init"
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform init -backend-config=${{ steps.env-config.outputs.backend_hcl }}
@@ -216,8 +228,6 @@ jobs:
       # =====================================================================
       # Step 8: Terraform Plan
       # =====================================================================
-      # Uses the environment-specific tfvars file. Saves plan to file so
-      # apply can execute exactly what was planned.
       - name: "Terraform Plan"
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
@@ -229,15 +239,92 @@ jobs:
             -input=false
 
       # =====================================================================
-      # Step 9: Terraform Apply (Protected Branches Only)
+      # Step 9: Upload Plan Artifact
       # =====================================================================
-      # Apply is ONLY allowed on push events (post-merge). PRs are always
-      # plan-only. This requires a ref-based FIC in Azure AD.
-      - name: "Terraform Apply"
+      # The plan file is uploaded so the apply job can execute exactly what
+      # was planned — no drift between plan and apply.
+      - name: "Upload Plan Artifact"
         if: steps.env-config.outputs.apply_allowed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ env.TF_ENVIRONMENT }}
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
+          retention-days: 5
+
+  # ==========================================================================
+  # JOB 2: APPLY — Download Plan + Apply (with Manual Approval)
+  # ==========================================================================
+  # Runs ONLY on push events (post-merge). Gated by a GitHub Environment
+  # with required reviewers — the workflow pauses until a human approves.
+  apply:
+    name: "Apply - ${{ needs.plan.outputs.tf_environment }}"
+    needs: plan
+    if: needs.plan.outputs.apply_allowed == 'true'
+    runs-on: ubuntu-latest
+
+    # -----------------------------------------------------------------------
+    # GitHub Environment — this is the approval gate.
+    # The workflow will pause here until a required reviewer approves.
+    # Configure reviewers in: Repo → Settings → Environments
+    # -----------------------------------------------------------------------
+    environment: ${{ needs.plan.outputs.tf_environment }}
+
+    env:
+      TF_ENVIRONMENT: ${{ needs.plan.outputs.tf_environment }}
+
+    steps:
+      # =====================================================================
+      # Step 1: Checkout Repository
+      # =====================================================================
+      - name: "Checkout repository"
+        uses: actions/checkout@v4
+
+      # =====================================================================
+      # Step 2: Setup Terraform
+      # =====================================================================
+      - name: "Setup Terraform ${{ env.TF_VERSION }}"
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # =====================================================================
+      # Step 3: Azure Login via OIDC
+      # =====================================================================
+      - name: "Azure Login (OIDC)"
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # =====================================================================
+      # Step 4: Terraform Init
+      # =====================================================================
+      # Must re-init in the apply job because jobs run on separate runners.
+      - name: "Terraform Init"
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          BACKEND_HCL="environments/${{ env.TF_ENVIRONMENT }}/backend.hcl"
+          terraform init -backend-config=${BACKEND_HCL}
+
+      # =====================================================================
+      # Step 5: Download Plan Artifact
+      # =====================================================================
+      - name: "Download Plan Artifact"
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ env.TF_ENVIRONMENT }}
+          path: ${{ env.TF_WORKING_DIR }}
+
+      # =====================================================================
+      # Step 6: Terraform Apply
+      # =====================================================================
+      # Applies the exact plan that was reviewed and approved. No -auto-approve
+      # flag — the plan file itself acts as the approval input for Terraform.
+      - name: "Terraform Apply"
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
           echo "=== Applying to environment: ${{ env.TF_ENVIRONMENT }} ==="
-          echo "=== Branch: ${{ env.EFFECTIVE_BRANCH }} ==="
-          echo "=== CAUTION: This will modify real infrastructure ==="
-          terraform apply -auto-approve tfplan
+          echo "=== Branch: ${{ github.ref_name }} ==="
+          echo "=== Approved by: GitHub Environment reviewer ==="
+          terraform apply tfplan
