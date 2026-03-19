@@ -1,0 +1,300 @@
+# =============================================================================
+# SecureFin Platform - Terraform CI/CD Pipeline
+# =============================================================================
+# PURPOSE: Automated infrastructure deployment pipeline with branch-based
+# environment targeting and safety controls.
+#
+# BRANCHING STRATEGY:
+# ────────────────────
+#   dev-*        → Feature branches → Plan ONLY (no apply) → uses dev.tfvars
+#   dev          → Development env  → Plan + Apply          → uses dev.tfvars
+#   staging      → Staging env      → Plan + Apply          → uses staging.tfvars
+#   production   → Production env   → Plan + Apply          → uses production.tfvars
+#
+# SECURITY:
+# ────────────────────
+#   - OIDC authentication (no secrets stored in GitHub)
+#   - Path filtering ensures only infra changes trigger the pipeline
+#   - Feature branches can NEVER run apply (enforced by conditional logic)
+#
+# PATH FILTERING:
+# ────────────────────
+#   - Triggers ONLY on changes in infra/terraform/**
+#   - Changes ONLY in docs/** will NOT trigger the pipeline
+# =============================================================================
+
+name: "Terraform CI/CD - SecureFin Platform"
+
+# ---------------------------------------------------------------------------
+# Trigger Configuration
+# ---------------------------------------------------------------------------
+# WHY push (not pull_request): The branching strategy uses direct pushes to
+# dev and merges to staging/production. Feature branches (dev-*) push triggers
+# run plan-only validation.
+#
+# WHY path filtering: Infrastructure changes live exclusively under
+# infra/terraform/. Documentation changes (docs/**) must NOT trigger
+# expensive Terraform operations. The paths-ignore ensures docs-only
+# commits are completely silent.
+on:
+  push:
+    branches:
+      - dev
+      - "dev-*"       # Feature branches: dev-feature-login, dev-fix-network, etc.
+      - staging
+      - production
+    paths:
+      - "infra/terraform/**"
+    # WHY paths-ignore for docs: Even if someone modifies both docs/ and
+    # infra/ in the same commit, the paths filter above ensures the pipeline
+    # only triggers when infra/ files change. But if ONLY docs/ files change,
+    # neither paths nor paths-ignore will trigger.
+    # The paths filter above is sufficient — docs-only changes won't match.
+
+# ---------------------------------------------------------------------------
+# Security: OIDC Token Permissions
+# ---------------------------------------------------------------------------
+# WHY id-token write: Required for GitHub Actions to request an OIDC JWT
+# token that Azure AD can validate. This is the foundation of secretless auth.
+# WHY contents read: Required to checkout the repository code.
+permissions:
+  id-token: write
+  contents: read
+
+# ---------------------------------------------------------------------------
+# Concurrency Control
+# ---------------------------------------------------------------------------
+# WHY: Prevent parallel Terraform runs on the same environment. Concurrent
+# applies can corrupt state or cause resource conflicts. The group key
+# includes the branch name so different environments CAN run in parallel.
+concurrency:
+  group: terraform-${{ github.ref_name }}
+  cancel-in-progress: false  # WHY: Never cancel an in-progress apply
+
+# ---------------------------------------------------------------------------
+# Environment Variables
+# ---------------------------------------------------------------------------
+# WHY centralized env block: These values are used across multiple steps.
+# Defining them once prevents duplication and ensures consistency.
+env:
+  TF_VERSION: "1.5.0"
+  ARM_USE_OIDC: "true"         # WHY: Tells Terraform CLI to use OIDC for Azure auth
+  ARM_USE_AZUREAD: "true"      # WHY: Tells Terraform to use Azure AD for storage backend
+
+jobs:
+  terraform:
+    name: "Terraform - ${{ github.ref_name }}"
+    runs-on: ubuntu-latest
+
+    # -----------------------------------------------------------------------
+    # Environment Detection
+    # -----------------------------------------------------------------------
+    # WHY: Map branch names to environment names and tfvars files.
+    # Feature branches (dev-*) map to the dev environment for plan validation.
+    # This is a CRITICAL safety mechanism: feature branches use dev config
+    # but can NEVER apply changes.
+    env:
+      # WHY conditional: Determines which environment directory and tfvars
+      # file to use based on the branch that triggered the pipeline.
+      #
+      # Logic:
+      #   - production branch  → production environment
+      #   - staging branch     → staging environment
+      #   - dev branch         → dev environment
+      #   - dev-* branches     → dev environment (plan only)
+      TF_ENVIRONMENT: ${{ github.ref_name == 'production' && 'production' || github.ref_name == 'staging' && 'staging' || 'dev' }}
+
+    steps:
+      # =====================================================================
+      # Step 1: Checkout Repository
+      # =====================================================================
+      # WHY: Fetch the repository code so Terraform can access the configs.
+      - name: "Checkout repository"
+        uses: actions/checkout@v4
+
+      # =====================================================================
+      # Step 2: Detect Environment Configuration
+      # =====================================================================
+      # WHY: Dynamically set the working directory and tfvars file path based
+      # on the resolved environment. This eliminates hardcoded paths and makes
+      # the pipeline truly environment-agnostic.
+      #
+      # INTERVIEW NOTE: This step demonstrates advanced GitHub Actions patterns:
+      #   - Dynamic environment resolution from branch name
+      #   - Feature branch safety (dev-* always maps to dev)
+      #   - Single pipeline serving all environments (DRY)
+      - name: "Detect environment and set paths"
+        id: env-config
+        run: |
+          echo "=== Branch: ${{ github.ref_name }} ==="
+          echo "=== Resolved Environment: ${{ env.TF_ENVIRONMENT }} ==="
+
+          # Set the working directory to the environment-specific Terraform config
+          WORK_DIR="infra/terraform/environments/${{ env.TF_ENVIRONMENT }}"
+          echo "tf_working_dir=${WORK_DIR}" >> "$GITHUB_OUTPUT"
+
+          # Set the tfvars file path — each environment has its own tfvars
+          TFVARS_FILE="${WORK_DIR}/${{ env.TF_ENVIRONMENT }}.tfvars"
+          echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
+
+          # Determine if apply is allowed on this branch
+          # WHY: Feature branches (dev-*) must NEVER apply. Only the exact
+          # branch names dev, staging, production are allowed to apply.
+          if [[ "${{ github.ref_name }}" == "dev" || "${{ github.ref_name }}" == "staging" || "${{ github.ref_name }}" == "production" ]]; then
+            echo "apply_allowed=true" >> "$GITHUB_OUTPUT"
+            echo "=== Apply: ALLOWED ==="
+          else
+            echo "apply_allowed=false" >> "$GITHUB_OUTPUT"
+            echo "=== Apply: BLOCKED (feature branch) ==="
+          fi
+
+          echo "=== Working Directory: ${WORK_DIR} ==="
+          echo "=== Tfvars File: ${TFVARS_FILE} ==="
+
+      # =====================================================================
+      # Step 3: Setup Terraform
+      # =====================================================================
+      # WHY: Install the pinned Terraform version to ensure consistent
+      # behavior across all pipeline runs.
+      - name: "Setup Terraform ${{ env.TF_VERSION }}"
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # =====================================================================
+      # Step 4: Azure Login via OIDC
+      # =====================================================================
+      # WHY OIDC: The azure/login action exchanges the GitHub-issued JWT for
+      # an Azure AD access token. No client secrets are stored in GitHub.
+      #
+      # The three required values (client-id, tenant-id, subscription-id) are
+      # stored as GitHub Actions secrets. While they are not truly "secret"
+      # (they're GUIDs that identify the federation target), storing them as
+      # secrets keeps them out of logs and provides a single management point.
+      #
+      # PREREQUISITE: An Azure AD App Registration must exist with:
+      #   1. Federated credentials for this GitHub repo and branches
+      #   2. RBAC roles assigned on the target subscription/resource groups
+      - name: "Azure Login (OIDC)"
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # =====================================================================
+      # Step 5: Terraform Format Check
+      # =====================================================================
+      # WHY: Enforces consistent code formatting. Fails the pipeline if any
+      # file is not properly formatted.  This catches formatting issues
+      # early before more expensive operations (init, plan) run.
+      #
+      # WHY -check flag: Runs in read-only mode. Does not modify files —
+      # only reports violations and exits non-zero if formatting issues exist.
+      #
+      # WHY -recursive: Checks all .tf files in the working directory and
+      # subdirectories, catching formatting issues in module references too.
+      - name: "Terraform Format Check"
+        working-directory: ${{ steps.env-config.outputs.tf_working_dir }}
+        run: terraform fmt -check -recursive
+
+      # =====================================================================
+      # Step 6: Terraform Init
+      # =====================================================================
+      # WHY: Initializes the Terraform working directory. Downloads providers,
+      # configures the remote backend, and validates module sources.
+      #
+      # WHY -backend-config: Passes the environment-specific backend.hcl file
+      # which contains the storage account name, resource group, and container.
+      # This allows the same backend.tf to be reused with different storage
+      # backends per environment.
+      #
+      # WHY ARM_* env vars: These environment variables are consumed by the
+      # AzureRM backend and provider for OIDC authentication. They are set
+      # here to ensure both init and subsequent commands use the same auth.
+      - name: "Terraform Init"
+        working-directory: ${{ steps.env-config.outputs.tf_working_dir }}
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: terraform init -backend-config=backend.hcl
+
+      # =====================================================================
+      # Step 7: Terraform Validate
+      # =====================================================================
+      # WHY: Validates the Terraform configuration for syntax and internal
+      # consistency BEFORE planning. Catches:
+      #   - Missing required variables
+      #   - Invalid resource references
+      #   - Module input/output mismatches
+      #   - Provider configuration errors
+      #
+      # This is cheaper than plan (no API calls) and catches many errors.
+      - name: "Terraform Validate"
+        working-directory: ${{ steps.env-config.outputs.tf_working_dir }}
+        run: terraform validate
+
+      # =====================================================================
+      # Step 8: Terraform Plan
+      # =====================================================================
+      # WHY: Generates an execution plan showing what Terraform WILL do.
+      # This runs on ALL branches (including feature branches) to provide
+      # early feedback on infrastructure changes.
+      #
+      # WHY -var-file: Uses the environment-specific tfvars file resolved
+      # in Step 2. This ensures dev-* branches plan with dev values,
+      # staging plans with staging values, etc.
+      #
+      # WHY -out=tfplan: Saves the plan to a file so the apply step can
+      # execute EXACTLY what was planned — no drift between plan and apply.
+      #
+      # WHY -detailed-exitcode: Returns exit code 2 when changes are detected.
+      # This allows downstream logic to differentiate between "no changes"
+      # and "changes pending". However, we don't use it here to keep the
+      # pipeline simple — any non-zero exit (except 2) indicates failure.
+      - name: "Terraform Plan"
+        working-directory: ${{ steps.env-config.outputs.tf_working_dir }}
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          echo "=== Planning for environment: ${{ env.TF_ENVIRONMENT }} ==="
+          echo "=== Using tfvars: ${{ env.TF_ENVIRONMENT }}.tfvars ==="
+          terraform plan \
+            -var-file=${{ env.TF_ENVIRONMENT }}.tfvars \
+            -out=tfplan \
+            -input=false
+
+      # =====================================================================
+      # Step 9: Terraform Apply (Protected Branches Only)
+      # =====================================================================
+      # WHY conditional: This is the MOST CRITICAL safety control in the
+      # pipeline. Apply is ONLY allowed when:
+      #   1. The branch is dev, staging, or production (not dev-*)
+      #   2. The apply_allowed flag was set in Step 2
+      #
+      # INTERVIEW NOTE: This demonstrates the "plan on all, apply on few"
+      # pattern — the gold standard for Terraform CI/CD safety.
+      #
+      # WHY -auto-approve: The plan was already generated and saved in Step 8.
+      # The apply uses the saved plan file, so -auto-approve is safe —
+      # Terraform will execute EXACTLY what was shown in the plan output.
+      #
+      # WHY tfplan file: Using the saved plan file ensures no drift between
+      # what was reviewed in the plan step and what is applied. Without this,
+      # Terraform would re-plan at apply time, potentially including changes
+      # that occurred between plan and apply.
+      - name: "Terraform Apply"
+        if: steps.env-config.outputs.apply_allowed == 'true'
+        working-directory: ${{ steps.env-config.outputs.tf_working_dir }}
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          echo "=== Applying to environment: ${{ env.TF_ENVIRONMENT }} ==="
+          echo "=== Branch: ${{ github.ref_name }} ==="
+          echo "=== CAUTION: This will modify real infrastructure ==="
+          terraform apply -auto-approve tfplan
