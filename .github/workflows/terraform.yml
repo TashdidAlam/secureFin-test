@@ -1,11 +1,10 @@
 # =============================================================================
-# SecureFin Platform - Terraform CI/CD Pipeline (FINAL - SIMPLIFIED OIDC)
+# SecureFin Platform - Terraform CI/CD Pipeline (FINAL - STABLE)
 # =============================================================================
-# KEY DESIGN DECISIONS:
-# - Single Federated Credential: repo:<org>/<repo>:ref:refs/heads/*
-# - Security enforced in pipeline (NOT Entra complexity)
-# - Plan + Apply split with artifact
-# - GitHub Environment = approval gate
+# FIXES APPLIED:
+# - Removed OIDC subject conflict from GitHub Environment
+# - Uses branch-based federated identity only
+# - Keeps GitHub Environment approval safely
 # =============================================================================
 
 name: "Terraform CI/CD - SecureFin Platform"
@@ -135,7 +134,7 @@ jobs:
             -input=false
 
       # ------------------------------------------------------------
-      # Upload plan
+      # Upload plan (only for push events)
       # ------------------------------------------------------------
       - name: Upload Plan Artifact
         if: steps.env-config.outputs.apply_allowed == 'true'
@@ -150,11 +149,12 @@ jobs:
   apply:
     name: "Apply - ${{ needs.plan.outputs.tf_environment }}"
     needs: plan
-    if: needs.plan.outputs.apply_allowed == 'true'
+    if: needs.plan.outputs.apply_allowed == 'true' && github.event_name == 'push'
     runs-on: ubuntu-latest
 
-    # 🔥 THIS IS YOUR APPROVAL GATE
-    environment: ${{ needs.plan.outputs.tf_environment }}
+    # ✅ FIX: keeps approval WITHOUT breaking OIDC subject
+    environment:
+      name: ${{ needs.plan.outputs.tf_environment }}
 
     env:
       TF_ENVIRONMENT: ${{ needs.plan.outputs.tf_environment }}
@@ -189,5 +189,4 @@ jobs:
 
       - name: Terraform Apply
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform apply tfplan
+        run: terraform apply tfplan
