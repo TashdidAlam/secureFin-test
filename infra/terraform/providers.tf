@@ -1,14 +1,9 @@
 # =============================================================================
 # SecureFin Platform - Provider Configuration
 # =============================================================================
-# Authentication is handled entirely via ARM_* environment variables:
-#   ARM_USE_OIDC          → Enables OIDC (Workload Identity) auth
-#   ARM_CLIENT_ID         → App Registration client ID
-#   ARM_TENANT_ID         → Azure AD tenant ID
-#   ARM_SUBSCRIPTION_ID   → Target subscription
-#
-# In CI/CD, these are set from GitHub repository variables.
-# For local development, use `az login` (no env vars needed).
+# Authentication uses OIDC (Workload Identity Federation) in CI/CD.
+# Azure identity values are declared as variables with defaults in variables.tf
+# and can be overridden via ARM_* env vars or -var flags.
 # =============================================================================
 
 provider "azurerm" {

@@ -2,7 +2,7 @@
 
 ## Summary
 
-This PR establishes the complete Terraform infrastructure foundation and GitHub Actions CI/CD pipeline for the SecureFin fintech platform. It implements a production-grade, zero-secret architecture using Azure Workload Identity (OIDC), Customer Managed Key (CMK) encryption for Terraform state, and a branch-based deployment strategy with safety controls.
+This PR establishes the complete Terraform infrastructure foundation and GitHub Actions CI/CD pipeline for the SecureFin fintech platform. It implements a production-grade, zero-secret architecture using Azure Workload Identity (OIDC) and a branch-based deployment strategy with safety controls.
 
 ## Type of Change
 
@@ -13,31 +13,22 @@ This PR establishes the complete Terraform infrastructure foundation and GitHub 
 
 ## What's Included
 
-### 🔐 Bootstrap Layer (`bootstrap/state/`)
-- Resource Group for state management resources
-- Azure Key Vault with purge protection and RBAC authorization
-- RSA-2048 CMK key with 90-day automatic rotation policy
-- Storage Account with:
-  - GRS replication for geo-redundancy
-  - `shared_access_key_enabled = false` (Azure AD auth only)
-  - CMK encryption via User Assigned Managed Identity
-  - Blob versioning and retention policies
-- RBAC role assignments (Crypto Officer, Crypto Service Encryption User, Storage Blob Data Contributor)
-
 ### 📦 Reusable Modules (`infra/terraform/modules/`)
 - **tags** — Centralized tagging strategy enforcing mandatory compliance tags (Project, Environment, Owner, CostCenter, ManagedBy) with support for additional custom tags
 - **resource-group** — Resource group creation with naming convention validation (`rg-` prefix enforcement)
 
 ### 🌍 Environment Configurations (`infra/terraform/environments/`)
-Three structurally identical environments (`dev`, `staging`, `production`) each containing:
-- `versions.tf` — Terraform >= 1.5.0, AzureRM ~> 3.80.0
+Three environments (`dev`, `staging`, `production`) each containing only:
+- `backend.hcl` — External backend config values (RG, storage account, container, state key)
+- `{env}.tfvars` — Environment-specific variable values
+
+All shared Terraform code lives in the root `infra/terraform/` directory:
+- `main.tf` — Module composition (tags + 3 resource groups: core, aks, data)
+- `variables.tf` — Input variable declarations with defaults
 - `providers.tf` — OIDC-authenticated AzureRM provider
 - `backend.tf` — Azure backend with `use_oidc = true` and `use_azuread_auth = true`
-- `backend.hcl` — External backend config values
-- `variables.tf` — Input variable declarations with validation
-- `main.tf` — Module composition (tags + 3 resource groups: core, aks, data)
+- `versions.tf` — Terraform >= 1.5.0, AzureRM ~> 3.80.0
 - `outputs.tf` — Resource group names, environment, tags
-- `{env}.tfvars` — Environment-specific variable values
 
 ### 🔁 CI/CD Pipeline (`.github/workflows/terraform.yml`)
 - **Branch-based deployment**: `dev-*` (plan only) → `dev` (apply) → `staging` (apply) → `production` (apply)
@@ -57,24 +48,17 @@ Three structurally identical environments (`dev`, `staging`, `production`) each 
 | Decision | Rationale |
 |----------|-----------|
 | OIDC over client secrets | Zero-secret auth; tokens are short-lived and scoped to workflow runs |
-| CMK over platform-managed keys | Regulatory compliance (PCI-DSS, SOC2); organization-controlled key rotation |
-| Separate bootstrap layer | Chicken-and-egg: state backend must exist before Terraform can use it |
-| User Assigned MI for CMK | Survives resource recreation; can be pre-authorized before storage exists |
-| `shared_access_key_enabled = false` | Eliminates shared key leakage risk entirely |
+| Flat shared root layout | Eliminates code duplication; only tfvars/backend.hcl differ per environment |
+| Identity values as variable defaults | Ensures provider always has valid auth even if ARM_* env vars are missing |
+| Pre-created state backend | Simpler than bootstrapping via Terraform; avoids chicken-and-egg complexity |
 | Separate resource groups per domain | Isolated RBAC, lifecycle management, and blast radius reduction |
-| Structural parity across environments | Ensures staging validation is meaningful for production |
 
 ## Validation Performed
 
 | Check | Result |
 |-------|--------|
-| `terraform fmt -check -recursive` (bootstrap) | ✅ Pass |
-| `terraform fmt -check -recursive` (modules) | ✅ Pass |
-| `terraform fmt -check -recursive` (environments) | ✅ Pass |
-| `terraform init -backend=false` + `terraform validate` (bootstrap/state) | ✅ Pass |
-| `terraform init -backend=false` + `terraform validate` (environments/dev) | ✅ Pass |
-| `terraform init -backend=false` + `terraform validate` (environments/staging) | ✅ Pass |
-| `terraform init -backend=false` + `terraform validate` (environments/production) | ✅ Pass |
+| `terraform fmt -check -recursive` | ✅ Pass |
+| `terraform init -backend=false` + `terraform validate` | ✅ Pass |
 
 **Terraform version used**: v1.11.3 (satisfies `>= 1.5.0` constraint)
 **AzureRM provider resolved**: v3.80.0 (satisfies `~> 3.80.0` constraint)
@@ -83,39 +67,30 @@ Three structurally identical environments (`dev`, `staging`, `production`) each 
 
 Before the CI/CD pipeline can run, the following must be configured:
 
-1. **Bootstrap**: Run `bootstrap/state/` locally to provision state backend infrastructure
+1. **State Backend**: Pre-create storage account `tashdidstatebackup68` with container `tfstate` in RG `rg-securefin-tfstate`
 2. **Azure AD App Registration**: Create with OIDC federated credentials for GitHub Actions
-3. **GitHub Secrets**: Configure `AZURE_CLIENT_ID_PLAN`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
-4. **Backend.hcl**: Update all environment `backend.hcl` files with bootstrap output values
-5. **Tfvars**: Replace placeholder GUIDs in `*.tfvars` with actual Azure identifiers
+3. **GitHub Repository Variables**: Configure `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
+4. **RBAC**: Grant `Storage Blob Data Contributor` on the state storage account to the service principal
 
 ## Security Checklist
 
 - [x] No client secrets, certificates, or access keys anywhere in the codebase
 - [x] OIDC authentication for both provider and backend
-- [x] Storage account shared keys disabled
-- [x] CMK encryption with Key Vault purge protection
-- [x] RBAC authorization (no legacy access policies)
 - [x] Feature branches cannot run `terraform apply`
-- [x] Sensitive values externalized to GitHub Actions secrets
-- [x] TLS 1.2 minimum enforced on storage account
+- [x] Azure identity values stored as GitHub repository variables (non-secret GUIDs)
 - [x] Checkov security scanner integrated in CI pipeline (shift-left security)
 - [x] TFLint with Azure ruleset enforces provider-aware best practices
 
 ## Files Changed
 
 ```
-37 files added:
-  bootstrap/state/          — 5 files (versions, variables, main, outputs, tfvars)
-  infra/terraform/modules/  — 6 files (tags + resource-group modules)
-  infra/terraform/environments/ — 24 files (8 per environment × 3 environments)
-  .github/workflows/        — 1 file (terraform.yml)
-  docs/                     — 1 file (ARCHITECTURE.md)
-  .tflint.hcl               — TFLint config with terraform + azurerm rulesets
-  
-2 files modified:
-  .gitignore                — Allow .tfvars in version control
-  README.md                 — Complete project documentation
+infra/terraform/            — 6 shared root files (main, variables, providers, backend, versions, outputs)
+infra/terraform/modules/    — 6 files (tags + resource-group modules)
+infra/terraform/environments/ — 6 files (backend.hcl + tfvars × 3 environments)
+.github/workflows/          — 1 file (terraform.yml)
+docs/                       — 1 file (ARCHITECTURE.md)
+.tflint.hcl                 — TFLint config with terraform + azurerm rulesets
+README.md                   — Complete project documentation
 ```
 
 ## How to Test

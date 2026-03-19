@@ -1,10 +1,9 @@
 # =============================================================================
 # SecureFin Platform - Variables
 # =============================================================================
-# Azure identity values (subscription_id, tenant_id, client_id) are NOT
-# Terraform variables. They are passed via ARM_* environment variables
-# which the AzureRM provider and backend read automatically:
-#   ARM_CLIENT_ID, ARM_TENANT_ID, ARM_SUBSCRIPTION_ID
+# Azure identity values are declared here with default values and wired
+# into the provider block in providers.tf.
+# In CI/CD, ARM_* environment variables can override these.
 # =============================================================================
 
 variable "subscription_id" {
