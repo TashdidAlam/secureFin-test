@@ -43,13 +43,12 @@ on:
       - "dev-*"       # Feature branches: dev-feature-login, dev-fix-network, etc.
       - staging
       - production
-    paths:
-      - "infra/terraform/**"
-    # WHY paths-ignore for docs: Even if someone modifies both docs/ and
-    # infra/ in the same commit, the paths filter above ensures the pipeline
-    # only triggers when infra/ files change. But if ONLY docs/ files change,
-    # neither paths nor paths-ignore will trigger.
-    # The paths filter above is sufficient — docs-only changes won't match.
+    paths-ignore:
+      - "docs/**"
+    # WHY paths-ignore for docs: The pipeline triggers on ALL code changes
+    # EXCEPT documentation-only changes. This ensures workflow updates,
+    # tflint config, bootstrap changes, etc. all trigger the pipeline.
+    # Only pure docs/ changes are silently ignored.
 
 # ---------------------------------------------------------------------------
 # Security: OIDC Token Permissions
