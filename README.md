@@ -10,7 +10,7 @@ Production-grade Terraform infrastructure and CI/CD pipeline for the SecureFin f
 - Azure CLI
 - An Azure AD App Registration with OIDC federated credentials for GitHub Actions
 - A GitHub repository with the following secrets configured:
-  - `AZURE_CLIENT_ID`
+  - `AZURE_CLIENT_ID_PLAN`
   - `AZURE_TENANT_ID`
   - `AZURE_SUBSCRIPTION_ID`
 
@@ -38,7 +38,7 @@ In your GitHub repository settings, add:
 
 | Secret | Description |
 |--------|-------------|
-| `AZURE_CLIENT_ID` | App Registration client ID with OIDC federation |
+| `AZURE_CLIENT_ID_PLAN` | App Registration client ID with OIDC federation |
 | `AZURE_TENANT_ID` | Azure AD tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Target Azure subscription ID |
 
@@ -75,6 +75,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full architecture documenta
 - **Azure AD-only storage access** — shared access keys disabled
 - **RBAC authorization** — Key Vault and Storage use Azure RBAC, not access policies
 - **Branch-based safety** — feature branches can never run `terraform apply`
+- **TFLint** — Azure-aware linting with `tflint-ruleset-azurerm` in CI pipeline
+- **Checkov** — Static IaC security scanner (CIS Azure, PCI-DSS, SOC2) in CI pipeline
 
 ## Tagging
 

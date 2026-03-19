@@ -45,7 +45,9 @@ Three structurally identical environments (`dev`, `staging`, `production`) each 
 - **OIDC authentication**: Uses `azure/login@v2` with federated credentials — zero secrets
 - **Concurrency control**: One Terraform run per branch at a time
 - **Saved plan files**: Apply executes exactly what was planned (`-out=tfplan`)
-- **Full pipeline steps**: checkout → fmt check → init (with backend.hcl) → validate → plan → conditional apply
+- **Full pipeline steps**: checkout → fmt check → **tflint** → **checkov security scan** → init (with backend.hcl) → validate → plan → conditional apply
+- **TFLint**: Azure-aware linting with `tflint-ruleset-azurerm` catches invalid VM sizes, deprecated SKUs, missing provider constraints
+- **Checkov**: Static security & compliance scanner (CIS Azure, PCI-DSS, SOC2) runs in soft-fail advisory mode
 
 ### 📖 Documentation (`docs/`)
 - `ARCHITECTURE.md` — Full architecture documentation covering bootstrap rationale, module design, environment strategy, CI/CD pipeline behavior matrix, security architecture, and validation guide
@@ -83,7 +85,7 @@ Before the CI/CD pipeline can run, the following must be configured:
 
 1. **Bootstrap**: Run `bootstrap/state/` locally to provision state backend infrastructure
 2. **Azure AD App Registration**: Create with OIDC federated credentials for GitHub Actions
-3. **GitHub Secrets**: Configure `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
+3. **GitHub Secrets**: Configure `AZURE_CLIENT_ID_PLAN`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
 4. **Backend.hcl**: Update all environment `backend.hcl` files with bootstrap output values
 5. **Tfvars**: Replace placeholder GUIDs in `*.tfvars` with actual Azure identifiers
 
@@ -97,6 +99,8 @@ Before the CI/CD pipeline can run, the following must be configured:
 - [x] Feature branches cannot run `terraform apply`
 - [x] Sensitive values externalized to GitHub Actions secrets
 - [x] TLS 1.2 minimum enforced on storage account
+- [x] Checkov security scanner integrated in CI pipeline (shift-left security)
+- [x] TFLint with Azure ruleset enforces provider-aware best practices
 
 ## Files Changed
 
@@ -107,6 +111,7 @@ Before the CI/CD pipeline can run, the following must be configured:
   infra/terraform/environments/ — 24 files (8 per environment × 3 environments)
   .github/workflows/        — 1 file (terraform.yml)
   docs/                     — 1 file (ARCHITECTURE.md)
+  .tflint.hcl               — TFLint config with terraform + azurerm rulesets
   
 2 files modified:
   .gitignore                — Allow .tfvars in version control
@@ -120,6 +125,10 @@ Before the CI/CD pipeline can run, the following must be configured:
 cd infra/terraform/environments/dev
 terraform init -backend=false
 terraform validate
+
+# Run tflint locally
+tflint --init --config ../../.tflint.hcl
+tflint --config ../../.tflint.hcl --format compact
 
 # Verify pipeline behavior by pushing this branch
 # Expected: Plan ONLY (no apply) since this is a dev-* feature branch

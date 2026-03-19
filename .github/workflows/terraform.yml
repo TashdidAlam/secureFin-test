@@ -178,7 +178,7 @@ jobs:
       - name: "Azure Login (OIDC)"
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
@@ -199,10 +199,73 @@ jobs:
         run: terraform fmt -check -recursive
 
       # =====================================================================
+      # Step 5a: TFLint — Terraform Linter
+      # =====================================================================
+      # WHY: TFLint catches errors that `terraform validate` misses:
+      #   - Missing provider version constraints in required_providers
+      #   - Invalid Azure VM sizes, deprecated SKUs, unsupported regions
+      #   - Deprecated interpolation syntax and attribute usage
+      #   - Naming convention violations
+      #
+      # WHY separate from validate: `terraform validate` only checks HCL
+      # syntax and provider schema correctness. TFLint adds provider-aware
+      # rules (e.g. "this VM size doesn't exist in this region") and
+      # community best practices the Terraform binary doesn't enforce.
+      #
+      # WHY --config flag: Points to the root-level .tflint.hcl that enables
+      # both the core terraform ruleset (recommended preset) and the azurerm
+      # ruleset for Azure-specific checks.
+      - name: "Setup TFLint"
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: "v0.61.0"
+
+      - name: "TFLint Init (download rulesets)"
+        working-directory: ${{ steps.env-config.outputs.tf_working_dir }}
+        run: tflint --init --config "${{ github.workspace }}/.tflint.hcl"
+
+      - name: "TFLint — Lint Check"
+        working-directory: ${{ steps.env-config.outputs.tf_working_dir }}
+        run: tflint --config "${{ github.workspace }}/.tflint.hcl" --format compact
+
+      # =====================================================================
+      # Step 5b: Checkov — Infrastructure Security Scanner
+      # =====================================================================
+      # WHY: Checkov is a static analysis tool that scans Terraform for
+      # security misconfigurations and compliance violations. It checks
+      # against 750+ built-in policies covering:
+      #   - CIS Azure Benchmark
+      #   - PCI-DSS / SOC2 / HIPAA controls
+      #   - OWASP infrastructure risks
+      #   - Encryption, networking, IAM best practices
+      #
+      # WHY --soft-fail: On initial adoption, we run Checkov in advisory mode
+      # so it reports findings WITHOUT blocking the pipeline. Once the team
+      # addresses existing findings, switch to hard-fail to enforce compliance.
+      #
+      # WHY --compact: Reduces log noise by showing only failed checks.
+      #
+      # WHY --framework terraform: Limits scanning to Terraform files only,
+      # avoiding false positives from other file types in the repo.
+      #
+      # INTERVIEW NOTE: This demonstrates "shift-left security" — catching
+      # security issues in CI BEFORE infrastructure is provisioned, not after.
+      - name: "Checkov — Security & Compliance Scan"
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ steps.env-config.outputs.tf_working_dir }}
+          framework: terraform
+          soft_fail: true
+          compact: true
+          quiet: true
+
+      # =====================================================================
       # Step 6: Terraform Init
       # =====================================================================
       # WHY: Initializes the Terraform working directory. Downloads providers,
       # configures the remote backend, and validates module sources.
+      # Runs AFTER lint & security scans to avoid wasting time on init
+      # if code quality gates fail first.
       #
       # WHY -backend-config: Passes the environment-specific backend.hcl file
       # which contains the storage account name, resource group, and container.
@@ -215,7 +278,7 @@ jobs:
       - name: "Terraform Init"
         working-directory: ${{ steps.env-config.outputs.tf_working_dir }}
         env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: terraform init -backend-config=backend.hcl
@@ -256,7 +319,7 @@ jobs:
       - name: "Terraform Plan"
         working-directory: ${{ steps.env-config.outputs.tf_working_dir }}
         env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
@@ -290,7 +353,7 @@ jobs:
         if: steps.env-config.outputs.apply_allowed == 'true'
         working-directory: ${{ steps.env-config.outputs.tf_working_dir }}
         env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
