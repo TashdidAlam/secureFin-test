@@ -12,10 +12,8 @@
 #
 # BRANCHING STRATEGY:
 # ────────────────────
-#   PR → dev         → Plan ONLY (validate infra changes before merge)
-#   PR → staging     → Plan ONLY (validate promotion to staging)
-#   PR → production  → Plan ONLY (validate production deployment)
-#   push → (future)  → Plan + Apply (requires ref-based FIC)
+#   PR → dev/staging/production  → Plan ONLY (validate before merge)
+#   push → dev/staging/production → Plan + Apply (post-merge deployment)
 #
 # AUTHENTICATION:
 # ────────────────────
@@ -23,6 +21,13 @@
 #   - Azure identity values stored as GitHub repository variables:
 #       AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
 #   - ARM_* environment variables auto-configure the AzureRM provider
+#
+# REQUIRED FICs (Federated Identity Credentials):
+# ────────────────────
+#   1. Subject: repo:TashdidAlam/secureFin-test:pull_request  (for PR plans)
+#   2. Subject: repo:TashdidAlam/secureFin-test:ref:refs/heads/dev  (for dev apply)
+#   3. Subject: repo:TashdidAlam/secureFin-test:ref:refs/heads/staging  (for staging apply)
+#   4. Subject: repo:TashdidAlam/secureFin-test:ref:refs/heads/production  (for prod apply)
 # =============================================================================
 
 name: "Terraform CI/CD - SecureFin Platform"
@@ -30,12 +35,18 @@ name: "Terraform CI/CD - SecureFin Platform"
 # ---------------------------------------------------------------------------
 # Trigger Configuration
 # ---------------------------------------------------------------------------
-# WHY pull_request: The FIC (Federated Identity Credential) is configured
-# with subject type 'pull_request'. Only PR-triggered workflows produce an
-# OIDC token with subject 'repo:<owner>/<repo>:pull_request', which matches
-# the FIC.
+# pull_request: Runs plan-only on PRs targeting environment branches.
+# push: Runs plan + apply when code is merged into environment branches.
+# Each trigger type requires its own FIC in Azure AD.
 on:
   pull_request:
+    branches:
+      - dev
+      - staging
+      - production
+    paths-ignore:
+      - "docs/**"
+  push:
     branches:
       - dev
       - staging
