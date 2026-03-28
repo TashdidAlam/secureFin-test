@@ -1,0 +1,47 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sallowedregistries
+  annotations:
+    description: "Restricts container images to specified registries (e.g., ACR only)."
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sAllowedRegistries
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            allowedRegistries:
+              description: "List of allowed container registry prefixes."
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sallowedregistries
+
+        violation[{"msg": msg}] {
+          container := input_containers[_]
+          not registry_allowed(container)
+          msg := sprintf("Container '%v' uses image '%v' from a disallowed registry. Allowed registries: %v", [container.name, container.image, input.parameters.allowedRegistries])
+        }
+
+        input_containers[c] {
+          c := input.review.object.spec.containers[_]
+        }
+
+        input_containers[c] {
+          c := input.review.object.spec.initContainers[_]
+        }
+
+        input_containers[c] {
+          c := input.review.object.spec.ephemeralContainers[_]
+        }
+
+        registry_allowed(container) {
+          allowed := input.parameters.allowedRegistries[_]
+          startswith(container.image, allowed)
+        }

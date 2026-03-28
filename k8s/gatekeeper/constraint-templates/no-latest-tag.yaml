@@ -1,0 +1,57 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sdisallowlatesttag
+  annotations:
+    description: "Disallows container images with the ':latest' tag or no tag specified."
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sDisallowLatestTag
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            exemptImages:
+              description: "List of image patterns to exempt (glob supported)."
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sdisallowlatesttag
+
+        violation[{"msg": msg}] {
+          container := input_containers[_]
+          has_latest_tag(container)
+          not is_exempt(container)
+          msg := sprintf("Container '%v' uses image '%v': ':latest' tag or no tag is not allowed. Pin to a specific version.", [container.name, container.image])
+        }
+
+        input_containers[c] {
+          c := input.review.object.spec.containers[_]
+        }
+
+        input_containers[c] {
+          c := input.review.object.spec.initContainers[_]
+        }
+
+        input_containers[c] {
+          c := input.review.object.spec.ephemeralContainers[_]
+        }
+
+        has_latest_tag(container) {
+          endswith(container.image, ":latest")
+        }
+
+        has_latest_tag(container) {
+          not contains(container.image, ":")
+        }
+
+        is_exempt(container) {
+          exempt := object.get(input, ["parameters", "exemptImages"], [])
+          img := exempt[_]
+          glob.match(img, ["/"], container.image)
+        }

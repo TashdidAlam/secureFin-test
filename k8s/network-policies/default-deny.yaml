@@ -1,0 +1,42 @@
+# =============================================================================
+# Default Deny NetworkPolicy
+# =============================================================================
+# WHY: Kubernetes allows all pod-to-pod traffic by default — any pod in any
+# namespace can talk to any other pod. This is a massive security risk in
+# fintech where services handle PII, payment data, and auth tokens.
+#
+# This policy implements "deny all ingress and egress" for the default
+# namespace. Every legitimate communication path must then be explicitly
+# allowed via additional NetworkPolicy resources.
+#
+# APPLIES TO: All pods in the "default" namespace (podSelector: {})
+# EFFECT: No ingress, no egress — pods are completely isolated until
+#         additional policies open specific ports/protocols.
+#
+# PREREQUISITE: AKS must have network_policy = "azure" (or calico) enabled.
+# Without a network policy provider, this YAML has no effect.
+#
+# DEPLOYMENT:
+#   kubectl apply -f default-deny.yaml
+#   kubectl get networkpolicy -n default
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: default
+  labels:
+    app.kubernetes.io/part-of: securefin
+    app.kubernetes.io/managed-by: platform-team
+    policy-type: baseline
+spec:
+  # WHY empty podSelector: Matches ALL pods in the namespace. This is the
+  # "catch-all" deny rule. Specific allow policies target individual apps.
+  podSelector: {}
+
+  # WHY both Ingress and Egress: Denying only ingress leaves egress open,
+  # which means a compromised pod could exfiltrate data. Denying both
+  # creates a true zero-trust baseline.
+  policyTypes:
+    - Ingress
+    - Egress

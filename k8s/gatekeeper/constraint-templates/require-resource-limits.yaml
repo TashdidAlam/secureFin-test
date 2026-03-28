@@ -1,0 +1,43 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequireresourcelimits
+  annotations:
+    description: "Requires all containers to specify CPU and memory resource limits."
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequireResourceLimits
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            requiredLimits:
+              description: "List of resource types that must have limits set."
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequireresourcelimits
+
+        violation[{"msg": msg}] {
+          container := input_containers[_]
+          required := input.parameters.requiredLimits[_]
+          not has_limit(container, required)
+          msg := sprintf("Container '%v' is missing required resource limit: '%v'. All containers must specify resource limits.", [container.name, required])
+        }
+
+        input_containers[c] {
+          c := input.review.object.spec.containers[_]
+        }
+
+        input_containers[c] {
+          c := input.review.object.spec.initContainers[_]
+        }
+
+        has_limit(container, resource) {
+          container.resources.limits[resource]
+        }
