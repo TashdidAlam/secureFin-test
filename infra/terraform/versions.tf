@@ -7,10 +7,10 @@
 # WHY >= 1.5.0: Terraform 1.5+ introduced the `check` block, improved
 # import workflows, and critical bug fixes for Azure backends.
 #
-# WHY ~> 3.117.0: Pessimistic constraint allows patch updates (3.117.x) but
-# prevents breaking minor version changes. AzureRM 3.117+ uses stable (GA)
-# AKS API versions and includes critical fixes for OIDC, Key Vault RBAC,
-# and policy assignment enforcement_mode.
+# WHY ~> 4.0: AzureRM 4.x is the latest stable major version. It removes
+# deprecated arguments (managed, enforce), renames others for consistency
+# (enable_auto_scaling → auto_scaling_enabled), and uses the latest Azure
+# API versions with full GA support for OIDC, Workload Identity, and AKS.
 # =============================================================================
 
 terraform {
@@ -19,7 +19,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 3.117.0"
+      version = "~> 4.0"
     }
   }
 }

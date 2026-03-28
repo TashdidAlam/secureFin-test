@@ -119,3 +119,69 @@ All resources include mandatory tags:
 ## License
 
 Proprietary. All rights reserved.
+
+---
+
+## Free-Tier Cost Optimization (Trade-offs)
+
+This project is deployed on an Azure **Free Account ($200 credit)**. The following trade-offs were made to minimize costs while preserving the security architecture. All changes are reversible from git history.
+
+### What We Changed vs. Production Config
+
+| Area | Production Config | Free-Tier Config | Monthly Savings |
+|------|-------------------|-------------------|-----------------|
+| **Node Pools** | 3 pools (system + user + spot) | 1 combined pool | ~$30–60/mo (1 fewer always-on VM) |
+| **System Pool Taint** | `CriticalAddonsOnly` (system-only) | Removed (accepts all workloads) | — (enables single-pool) |
+| **User Pool** | 1–3 nodes, auto-scaling | Removed | ~$30/mo |
+| **Spot Pool** | 0–3 nodes, auto-scaling | Removed | $0 (was already min 0) |
+| **VM Size** | `Standard_B2s_v2` | `Standard_B2s_v2` (kept) | — |
+| **Total Running VMs** | 2+ (system=1, user=1+) | 1 | ~$30/mo saved |
+
+### Estimated Monthly Cost (Free-Tier Config)
+
+| Resource | SKU/Tier | Estimated Cost |
+|----------|----------|----------------|
+| AKS Control Plane | Free tier (no SLA) | $0 |
+| 1x Standard_B2s_v2 VM | 2 vCPU, 8 GB RAM (burstable) | ~$30/mo |
+| 30 GB Managed OS Disk | Standard SSD | ~$2.40/mo |
+| VNet / Subnets / NSGs | — | $0 |
+| Resource Groups (3) | — | $0 |
+| Managed Identity + FIC | — | $0 |
+| Azure Policy (RG scope) | — | $0 |
+| Private DNS Zone (AKS) | Auto-created for private cluster | ~$0.50/mo |
+| **Total** | | **~$33/mo** |
+
+> With $200 credit, this configuration runs for approximately **6 months**.
+
+### What We Kept (Free or Negligible Cost)
+
+These security features are preserved because they are either free or have negligible cost:
+
+- **Private AKS cluster** — API server not exposed to internet
+- **OIDC + Workload Identity** — zero-secret pod authentication
+- **Azure CNI + Network Policies** — pod-level network segmentation
+- **Azure Policy (Gatekeeper)** — admission control inside the cluster
+- **Deny-by-default NSGs** — explicit allow rules only
+- **Tag enforcement policies** — compliance guardrails at ARM layer
+- **Deny public IP policy** — prevents accidental public exposure
+- **Location restriction policy** — data residency enforcement
+- **Local accounts disabled** — Azure AD-only authentication
+- **Kubernetes Network Policies** — default-deny + app-specific allow rules
+- **OPA Gatekeeper constraints** — ACR-only images, no latest tag, require resource limits
+
+### How to Restore Production Config
+
+```bash
+# View the commit that removed user/spot pools
+git log --oneline --all -- infra/terraform/modules/aks/
+
+# Restore the full AKS module from before free-tier optimization
+git diff HEAD~1 -- infra/terraform/modules/aks/
+```
+
+Key changes to make for production:
+1. Add `only_critical_addons_enabled = true` to default_node_pool
+2. Re-add `azurerm_kubernetes_cluster_node_pool.user` resource
+3. Re-add `azurerm_kubernetes_cluster_node_pool.spot` resource
+4. Restore user/spot variables in `modules/aks/variables.tf`
+5. Consider upgrading AKS to Standard tier (`sku_tier = "Standard"`) for SLA

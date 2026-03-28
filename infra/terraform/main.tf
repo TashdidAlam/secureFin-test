@@ -107,6 +107,7 @@ module "aks" {
   project             = var.project
   tags                = module.tags.tags
   aks_subnet_id       = module.network.aks_subnet_id
+  tenant_id           = var.tenant_id
 }
 
 # ---------------------------------------------------------------------------

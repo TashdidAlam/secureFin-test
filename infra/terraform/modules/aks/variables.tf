@@ -61,6 +61,11 @@ variable "aks_subnet_id" {
   type        = string
 }
 
+variable "tenant_id" {
+  description = "Azure AD tenant ID for AKS RBAC integration"
+  type        = string
+}
+
 # -----------------------------------------------------------------------------
 # Kubernetes version
 # -----------------------------------------------------------------------------
@@ -101,64 +106,17 @@ variable "system_node_count" {
 variable "system_node_vm_size" {
   description = "VM size for system nodes (burstable is fine — system pods are lightweight)"
   type        = string
-  default     = "Standard_B2s"
+  default     = "Standard_B2s_v2"
 }
 
 # -----------------------------------------------------------------------------
-# User node pool
+# User & Spot node pool variables (REMOVED — FREE-TIER OPTIMIZATION)
 # -----------------------------------------------------------------------------
-# WHY separate: Application workloads run here, isolated from system pods.
-# Auto-scaling is enabled so the pool can grow/shrink based on demand.
-# Production should set min=2 for HA, dev can use min=1 for cost savings.
+# These variables were removed because the user and spot node pools are
+# disabled to minimize costs on the free Azure tier ($200 credit).
+# Re-add from git history when restoring the full production config.
+# See: git log --all -- modules/aks/variables.tf
 # -----------------------------------------------------------------------------
-
-variable "user_node_min_count" {
-  description = "Minimum nodes in user pool (auto-scale lower bound)"
-  type        = number
-  default     = 1
-}
-
-variable "user_node_max_count" {
-  description = "Maximum nodes in user pool (auto-scale upper bound)"
-  type        = number
-  default     = 3
-}
-
-variable "user_node_vm_size" {
-  description = "VM size for user nodes (application workloads)"
-  type        = string
-  default     = "Standard_B2s"
-}
-
-# -----------------------------------------------------------------------------
-# Spot node pool
-# -----------------------------------------------------------------------------
-# WHY spot: Spot VMs are 60-90% cheaper than on-demand. Ideal for:
-#   - Dev/staging environments (acceptable interruptions)
-#   - Batch jobs, CI runners, non-critical workloads in production
-#   - Cost optimization without sacrificing architecture quality
-#
-# Spot eviction: Azure can reclaim these nodes with 30s notice. Workloads
-# must tolerate interruption (use PodDisruptionBudgets for critical apps).
-# -----------------------------------------------------------------------------
-
-variable "spot_node_min_count" {
-  description = "Minimum nodes in spot pool (can be 0 for cost savings)"
-  type        = number
-  default     = 0
-}
-
-variable "spot_node_max_count" {
-  description = "Maximum nodes in spot pool"
-  type        = number
-  default     = 3
-}
-
-variable "spot_node_vm_size" {
-  description = "VM size for spot nodes"
-  type        = string
-  default     = "Standard_B2s"
-}
 
 # -----------------------------------------------------------------------------
 # Network configuration (Azure CNI)

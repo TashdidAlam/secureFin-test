@@ -107,7 +107,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   # ---------------------------------------------------------------------------
   azure_active_directory_role_based_access_control {
     azure_rbac_enabled = true
-    managed            = true
+    tenant_id          = var.tenant_id
   }
 
   # ---------------------------------------------------------------------------
@@ -124,32 +124,26 @@ resource "azurerm_kubernetes_cluster" "this" {
   }
 
   # ---------------------------------------------------------------------------
-  # DEFAULT NODE POOL (SYSTEM)
+  # DEFAULT NODE POOL (COMBINED SYSTEM + USER)
   # ---------------------------------------------------------------------------
-  # WHY "System" mode: This pool is tainted with CriticalAddonsOnly, which
-  # prevents user workloads from scheduling here. Only system components
-  # (CoreDNS, konnectivity-agent, metrics-server, Azure CNI DaemonSets)
-  # run on these nodes.
+  # COST TRADE-OFF: In production, system and user workloads should be on
+  # separate pools (CriticalAddonsOnly taint). For the free-tier deployment,
+  # we consolidate into a single pool to minimize VM costs (1 node instead
+  # of 2+). System pods (CoreDNS, konnectivity) share the node with app
+  # workloads. This is acceptable for dev/test but NOT for production.
   #
-  # WHY min 1 node: System pool cannot scale to 0 — the cluster needs at
-  # least one node for DNS resolution and API server connectivity.
-  #
-  # WHY os_disk_type Managed: Default Managed disks with Premium SSD. For
-  # system nodes, Ephemeral OS disks are an option but require VM sizes
-  # with sufficient temp storage (not all B-series qualify).
+  # TO RESTORE PRODUCTION CONFIG:
+  #   1. Add only_critical_addons_enabled = true here
+  #   2. Re-add the user and spot node pool resources (see git history)
   # ---------------------------------------------------------------------------
   default_node_pool {
-    name                = "system"
-    node_count          = var.system_node_count
-    vm_size             = var.system_node_vm_size
-    vnet_subnet_id      = var.aks_subnet_id
-    os_disk_size_gb     = 30
-    type                = "VirtualMachineScaleSets"
-    enable_auto_scaling = false
-
-    # WHY: Only system-critical pods run here. User workloads are rejected
-    # by the CriticalAddonsOnly taint (they schedule on the user pool).
-    only_critical_addons_enabled = true
+    name                 = "system"
+    node_count           = var.system_node_count
+    vm_size              = var.system_node_vm_size
+    vnet_subnet_id       = var.aks_subnet_id
+    os_disk_size_gb      = 30
+    type                 = "VirtualMachineScaleSets"
+    auto_scaling_enabled = false
 
     tags = var.tags
   }
@@ -181,83 +175,14 @@ resource "azurerm_kubernetes_cluster" "this" {
 }
 
 # ---------------------------------------------------------------------------
-# NODE POOL: User Workloads
+# NODE POOLS: User & Spot (REMOVED — FREE-TIER COST OPTIMIZATION)
 # ---------------------------------------------------------------------------
-# WHY separate resource: azurerm_kubernetes_cluster_node_pool allows
-# independent lifecycle management. The user pool can be scaled, upgraded,
-# or replaced without touching the system pool.
+# REMOVED FOR FREE-TIER: User and Spot node pools are removed to minimize
+# VM costs. All workloads (system + user) run on the single default pool.
 #
-# WHY auto-scaling: Fintech workloads have variable load (market hours vs.
-# off-hours). Auto-scaling saves cost during low-traffic periods while
-# ensuring capacity during peaks.
-#
-# WHY no taint: User pool accepts all workloads by default. Specific apps
-# can use nodeSelector or tolerations for pool affinity if needed.
+# PRODUCTION RESTORATION: Re-add these resources from git history when
+# moving to a paid subscription. The production config should have:
+#   - System pool: only_critical_addons_enabled = true, 1-2 nodes
+#   - User pool: auto-scaling 1-3 nodes for application workloads
+#   - Spot pool: auto-scaling 0-3 nodes for non-critical/batch workloads
 # ---------------------------------------------------------------------------
-
-resource "azurerm_kubernetes_cluster_node_pool" "user" {
-  name                  = "user"
-  kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id
-  vm_size               = var.user_node_vm_size
-  vnet_subnet_id        = var.aks_subnet_id
-  os_disk_size_gb       = 30
-  enable_auto_scaling   = true
-  min_count             = var.user_node_min_count
-  max_count             = var.user_node_max_count
-  mode                  = "User"
-  tags                  = var.tags
-}
-
-# ---------------------------------------------------------------------------
-# NODE POOL: Spot (Cost Optimization)
-# ---------------------------------------------------------------------------
-# WHY spot: Spot VMs cost 60-90% less than on-demand. Azure can evict them
-# with 30 seconds notice when capacity is needed elsewhere.
-#
-# SUITABLE FOR: Dev/staging workloads, batch processing, CI runners,
-# non-critical background jobs, load testing.
-#
-# NOT SUITABLE FOR: Production API servers, databases, stateful workloads
-# that can't tolerate sudden eviction.
-#
-# SCHEDULING: The kubernetes.azure.com/scalesetpriority=spot:NoSchedule
-# taint ensures only pods with explicit spot tolerations land here.
-# This prevents critical workloads from accidentally running on spot nodes.
-#
-# WHY spot_max_price = -1: Pay whatever the current market price is. This
-# maximizes availability (Azure only evicts for capacity, not price).
-# Setting a price cap would cause more frequent evictions.
-#
-# WHY eviction_policy = Delete: When evicted, the node is deleted entirely
-# (vs. deallocated). The auto-scaler will provision a new spot VM when
-# capacity becomes available. Deallocate is only useful for stateful VMs.
-# ---------------------------------------------------------------------------
-
-resource "azurerm_kubernetes_cluster_node_pool" "spot" {
-  name                  = "spot"
-  kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id
-  vm_size               = var.spot_node_vm_size
-  vnet_subnet_id        = var.aks_subnet_id
-  os_disk_size_gb       = 30
-  enable_auto_scaling   = true
-  min_count             = var.spot_node_min_count
-  max_count             = var.spot_node_max_count
-  mode                  = "User"
-  priority              = "Spot"
-  eviction_policy       = "Delete"
-  spot_max_price        = -1
-  tags                  = var.tags
-
-  # WHY: Taint ensures only workloads that explicitly tolerate spot eviction
-  # are scheduled here. Without this, the scheduler might place a critical
-  # API server pod on a spot node that gets evicted during peak traffic.
-  node_taints = [
-    "kubernetes.azure.com/scalesetpriority=spot:NoSchedule"
-  ]
-
-  # WHY: Labels allow PodSpec nodeSelector to target spot nodes for
-  # cost-optimized workloads (e.g., batch jobs, dev environments).
-  node_labels = {
-    "kubernetes.azure.com/scalesetpriority" = "spot"
-  }
-}
