@@ -1,0 +1,92 @@
+# =============================================================================
+# Application-Specific NetworkPolicy — Allow API Traffic
+# =============================================================================
+# WHY: After applying the default-deny policy, pods can't communicate at all.
+# This policy selectively opens the minimum required traffic paths for the
+# SecureFin application:
+#
+#   INGRESS: Allow traffic TO app pods on port 8080 (from pods with the
+#            "api-gateway" role only — not from arbitrary pods)
+#
+#   EGRESS:  Allow traffic FROM app pods to:
+#            - CoreDNS (port 53) for service discovery
+#            - Other app pods on port 8080 for inter-service calls
+#
+# This follows the principle of least privilege at the network layer.
+# A compromised pod can only reach what's explicitly listed here.
+#
+# PATTERN: Create one NetworkPolicy per application/microservice. Each policy
+# documents exactly what that service needs to communicate with.
+#
+# DEPLOYMENT:
+#   kubectl apply -f allow-app-traffic.yaml
+#   kubectl describe networkpolicy allow-app-ingress -n default
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-ingress
+  namespace: default
+  labels:
+    app.kubernetes.io/part-of: securefin
+    app.kubernetes.io/managed-by: platform-team
+    policy-type: application
+spec:
+  # WHY: Targets only pods with the "securefin-app" label. Other pods in the
+  # namespace remain isolated by the default-deny policy.
+  podSelector:
+    matchLabels:
+      app: securefin-app
+
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # -----------------------------------------------------------------------
+    # Allow inbound traffic from API gateway pods on port 8080
+    # -----------------------------------------------------------------------
+    # WHY: Only the API gateway should route external traffic to app pods.
+    # Direct pod-to-pod access from other services is denied unless another
+    # NetworkPolicy explicitly allows it.
+    # -----------------------------------------------------------------------
+    - from:
+        - podSelector:
+            matchLabels:
+              role: api-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+
+  egress:
+    # -----------------------------------------------------------------------
+    # Allow DNS resolution (CoreDNS on port 53)
+    # -----------------------------------------------------------------------
+    # WHY: Without DNS, pods can't resolve Kubernetes service names
+    # (e.g., "my-service.default.svc.cluster.local"). DNS is the most
+    # fundamental egress requirement for any Kubernetes workload.
+    # -----------------------------------------------------------------------
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # -----------------------------------------------------------------------
+    # Allow outbound to other app pods (inter-service communication)
+    # -----------------------------------------------------------------------
+    # WHY: Microservices need to call each other. This allows app pods to
+    # reach other app pods on port 8080 within the same namespace.
+    # -----------------------------------------------------------------------
+    - to:
+        - podSelector:
+            matchLabels:
+              app: securefin-app
+      ports:
+        - protocol: TCP
+          port: 8080

@@ -104,6 +104,7 @@ The project uses a pre-created Azure Storage Account for Terraform state:
 | Resource Group | `rg-securefin-tfstate` |
 | Container | `tfstate` |
 | Auth Mode | Azure AD RBAC (no shared keys) |
+| State Locking | Azure Blob Storage lease (automatic, prevents concurrent modifications) |
 
 ---
 
