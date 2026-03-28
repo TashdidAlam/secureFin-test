@@ -20,6 +20,15 @@ set -euo pipefail
 # Arguments & Variables
 # ---------------------------------------------------------------------------
 ENV="${1:?Usage: $0 <environment> (dev|staging|production)}"
+case "$ENV" in
+  dev|staging|production)
+    ;;
+  *)
+    echo "Error: Invalid environment '$ENV'. Expected one of: dev, staging, production." >&2
+    echo "Usage: $0 <environment> (dev|staging|production)" >&2
+    exit 1
+    ;;
+esac
 PROJECT="securefin"
 RG_CORE="rg-${PROJECT}-core-${ENV}"
 RG_AKS="rg-${PROJECT}-aks-${ENV}"
@@ -32,9 +41,9 @@ WARN=0
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-check_pass() { echo "  ✅ PASS: $1"; ((PASS++)); }
-check_fail() { echo "  ❌ FAIL: $1"; ((FAIL++)); }
-check_warn() { echo "  ⚠️  WARN: $1"; ((WARN++)); }
+check_pass() { echo "  ✅ PASS: $1"; ((++PASS)); }
+check_fail() { echo "  ❌ FAIL: $1"; ((++FAIL)); }
+check_warn() { echo "  ⚠️  WARN: $1"; ((++WARN)); }
 
 section() { echo -e "\n══════════════════════════════════════════════════════════"; echo "  $1"; echo "══════════════════════════════════════════════════════════"; }
 
@@ -312,14 +321,18 @@ done
 
 # Check deny-public-IP effectiveness
 echo ""
-echo "  Testing deny-public-IP policy (dry run)..."
-DENY_TEST=$(az network public-ip create -g "$RG_AKS" -n "test-pip-validation" --sku Basic --output json 2>&1 || true)
-if echo "$DENY_TEST" | grep -qi "RequestDisallowedByPolicy\|denied by policy"; then
-  check_pass "Deny public IP policy is enforced — creation was blocked"
+if [[ "${ENABLE_DENY_PUBLIC_IP_LIVE_TEST:-false}" == "true" ]]; then
+  echo "  Testing deny-public-IP policy via live Public IP creation (may have side effects)..."
+  DENY_TEST=$(az network public-ip create -g "$RG_AKS" -n "test-pip-validation" --sku Basic --output json 2>&1 || true)
+  if echo "$DENY_TEST" | grep -qi "RequestDisallowedByPolicy\|denied by policy"; then
+    check_pass "Deny public IP policy is enforced — creation was blocked"
+  else
+    check_warn "Policy test inconclusive. May need time for policy evaluation, or policy not yet assigned."
+    # Clean up test PIP if it was accidentally created
+    az network public-ip delete -g "$RG_AKS" -n "test-pip-validation" --yes 2>/dev/null || true
+  fi
 else
-  check_warn "Policy test inconclusive. May need time for policy evaluation, or policy not yet assigned."
-  # Clean up test PIP if it was accidentally created
-  az network public-ip delete -g "$RG_AKS" -n "test-pip-validation" --yes 2>/dev/null || true
+  check_warn "Skipping live deny-public-IP test (set ENABLE_DENY_PUBLIC_IP_LIVE_TEST=true to run)"
 fi
 
 # ---------------------------------------------------------------------------

@@ -62,10 +62,10 @@ resource "azurerm_subnet" "aks" {
 # WHY a dedicated private endpoint subnet:
 # - Private endpoints for Key Vault, ACR, Storage, SQL etc. are placed here
 # - Keeps PaaS NICs isolated from compute NICs (easier auditing)
-# - private_endpoint_network_policies = "Enabled" is REQUIRED for private
-#   endpoint support (Azure enforces this at the subnet level)
-# - No NSG association: Azure private endpoints don't support NSG rules on
-#   their subnet (traffic is controlled by the PaaS firewall + private DNS)
+# - private_endpoint_network_policies_enabled = false is REQUIRED for private
+#   endpoint support on this subnet (Azure enforces policy behavior at the subnet level)
+# - NSG is associated: traffic is controlled by the subnet NSG plus the PaaS
+#   service firewall and private DNS configuration
 # ---------------------------------------------------------------------------
 
 resource "azurerm_subnet" "private_endpoints" {

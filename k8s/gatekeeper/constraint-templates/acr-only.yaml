@@ -29,16 +29,25 @@ spec:
           msg := sprintf("Container '%v' uses image '%v' from a disallowed registry. Allowed registries: %v", [container.name, container.image, input.parameters.allowedRegistries])
         }
 
-        input_containers[c] {
-          c := input.review.object.spec.containers[_]
+        # Normalize the Pod spec so this template works for Pods and for
+        # controllers (Deployment/DaemonSet/StatefulSet/Job) that use spec.template.spec.
+        pod_spec[spec] {
+          spec := input.review.object.spec
         }
-
-        input_containers[c] {
-          c := input.review.object.spec.initContainers[_]
+        pod_spec[spec] {
+          spec := input.review.object.spec.template.spec
         }
-
         input_containers[c] {
-          c := input.review.object.spec.ephemeralContainers[_]
+          spec := pod_spec[_]
+          c := spec.containers[_]
+        }
+        input_containers[c] {
+          spec := pod_spec[_]
+          c := spec.initContainers[_]
+        }
+        input_containers[c] {
+          spec := pod_spec[_]
+          c := spec.ephemeralContainers[_]
         }
 
         registry_allowed(container) {

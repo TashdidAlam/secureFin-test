@@ -30,12 +30,21 @@ spec:
           msg := sprintf("Container '%v' is missing required resource limit: '%v'. All containers must specify resource limits.", [container.name, required])
         }
 
-        input_containers[c] {
-          c := input.review.object.spec.containers[_]
+        # Normalize the Pod spec so this template works for Pods and for
+        # controllers (Deployment/DaemonSet/StatefulSet/Job) that use spec.template.spec.
+        pod_spec[spec] {
+          spec := input.review.object.spec
         }
-
+        pod_spec[spec] {
+          spec := input.review.object.spec.template.spec
+        }
         input_containers[c] {
-          c := input.review.object.spec.initContainers[_]
+          spec := pod_spec[_]
+          c := spec.containers[_]
+        }
+        input_containers[c] {
+          spec := pod_spec[_]
+          c := spec.initContainers[_]
         }
 
         has_limit(container, resource) {

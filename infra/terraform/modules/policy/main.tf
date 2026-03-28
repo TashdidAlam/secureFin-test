@@ -38,13 +38,19 @@ resource "azurerm_policy_definition" "require_tag" {
 }
 
 resource "azurerm_resource_group_policy_assignment" "require_tag" {
-  for_each = toset(var.required_tags)
+  for_each = {
+    for pair in setproduct(toset(var.resource_group_ids), toset(var.required_tags)) :
+    "${pair[0]}|${pair[1]}" => {
+      rg_id = pair[0]
+      tag   = pair[1]
+    }
+  }
 
-  name                 = "assign-tag-${lower(each.key)}-${var.environment}"
-  resource_group_id    = var.resource_group_ids[0]
-  policy_definition_id = azurerm_policy_definition.require_tag[each.key].id
-  display_name         = "Enforce tag: ${each.key}"
-  description          = "Ensures all resources in this RG carry the '${each.key}' tag."
+  name                 = "assign-tag-${lower(each.value.tag)}-${var.environment}-${index(var.resource_group_ids, each.value.rg_id)}"
+  resource_group_id    = each.value.rg_id
+  policy_definition_id = azurerm_policy_definition.require_tag[each.value.tag].id
+  display_name         = "Enforce tag: ${each.value.tag}"
+  description          = "Ensures all resources in this RG carry the '${each.value.tag}' tag."
   enforce              = true
 }
 
