@@ -18,11 +18,11 @@ output "tag_assignment_ids" {
 }
 
 output "deny_public_ip_assignment_ids" {
-  description = "List of deny-public-IP policy assignment IDs"
-  value       = azurerm_resource_group_policy_assignment.deny_public_ip[*].id
+  description = "Map of resource group key to deny-public-IP policy assignment ID"
+  value       = { for k, v in azurerm_resource_group_policy_assignment.deny_public_ip : k => v.id }
 }
 
 output "allowed_locations_assignment_ids" {
-  description = "List of allowed-locations policy assignment IDs"
-  value       = azurerm_resource_group_policy_assignment.allowed_locations[*].id
+  description = "Map of resource group key to allowed-locations policy assignment ID"
+  value       = { for k, v in azurerm_resource_group_policy_assignment.allowed_locations : k => v.id }
 }
