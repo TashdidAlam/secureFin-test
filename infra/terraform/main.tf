@@ -172,9 +172,9 @@ module "policy" {
   environment = var.environment
   project     = var.project
 
-  resource_group_ids = [
-    module.rg_core.id,
-    module.rg_aks.id,
-    module.rg_data.id,
-  ]
+  resource_group_ids = {
+    core = module.rg_core.id
+    aks  = module.rg_aks.id
+    data = module.rg_data.id
+  }
 }

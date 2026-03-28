@@ -39,15 +39,15 @@ resource "azurerm_policy_definition" "require_tag" {
 
 resource "azurerm_resource_group_policy_assignment" "require_tag" {
   for_each = {
-    for pair in setproduct(toset(var.resource_group_ids), toset(var.required_tags)) :
+    for pair in setproduct(keys(var.resource_group_ids), var.required_tags) :
     "${pair[0]}|${pair[1]}" => {
-      rg_id = pair[0]
-      tag   = pair[1]
+      rg_key = pair[0]
+      tag    = pair[1]
     }
   }
 
-  name                 = "assign-tag-${lower(each.value.tag)}-${var.environment}-${index(var.resource_group_ids, each.value.rg_id)}"
-  resource_group_id    = each.value.rg_id
+  name                 = "assign-tag-${lower(each.value.tag)}-${var.environment}-${each.value.rg_key}"
+  resource_group_id    = var.resource_group_ids[each.value.rg_key]
   policy_definition_id = azurerm_policy_definition.require_tag[each.value.tag].id
   display_name         = "Enforce tag: ${each.value.tag}"
   description          = "Ensures all resources in this RG carry the '${each.value.tag}' tag."
@@ -82,10 +82,10 @@ resource "azurerm_policy_definition" "deny_public_ip" {
 }
 
 resource "azurerm_resource_group_policy_assignment" "deny_public_ip" {
-  count = length(var.resource_group_ids)
+  for_each = var.resource_group_ids
 
-  name                 = "assign-deny-pip-${count.index}-${var.environment}"
-  resource_group_id    = var.resource_group_ids[count.index]
+  name                 = "assign-deny-pip-${each.key}-${var.environment}"
+  resource_group_id    = each.value
   policy_definition_id = azurerm_policy_definition.deny_public_ip.id
   display_name         = "Deny Public IPs"
   description          = "Blocks public IP creation in this resource group."
@@ -104,10 +104,10 @@ resource "azurerm_resource_group_policy_assignment" "deny_public_ip" {
 # regions listed in var.allowed_locations are permitted.
 # ---------------------------------------------------------------------------
 resource "azurerm_resource_group_policy_assignment" "allowed_locations" {
-  count = length(var.resource_group_ids)
+  for_each = var.resource_group_ids
 
-  name                 = "assign-locations-${count.index}-${var.environment}"
-  resource_group_id    = var.resource_group_ids[count.index]
+  name                 = "assign-locations-${each.key}-${var.environment}"
+  resource_group_id    = each.value
   policy_definition_id = "/providers/Microsoft.Authorization/policyDefinitions/e56962a6-4747-49cd-b67b-bf8b01975c4c"
   display_name         = "Restrict to allowed locations"
   description          = "Limits resource deployment to approved Azure regions for data residency compliance."

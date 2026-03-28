@@ -25,6 +25,6 @@ variable "allowed_locations" {
 }
 
 variable "resource_group_ids" {
-  description = "List of resource group IDs to assign policies to"
-  type        = list(string)
+  description = "Map of resource group name labels to IDs for policy assignment (keys must be static)"
+  type        = map(string)
 }
