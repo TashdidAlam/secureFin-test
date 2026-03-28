@@ -69,11 +69,11 @@ resource "azurerm_subnet" "aks" {
 # ---------------------------------------------------------------------------
 
 resource "azurerm_subnet" "private_endpoints" {
-  name                                      = "snet-pep-${var.environment}"
-  resource_group_name                       = var.resource_group_name
-  virtual_network_name                      = azurerm_virtual_network.this.name
-  address_prefixes                          = [var.private_endpoint_subnet_cidr]
-  private_endpoint_network_policies_enabled = false
+  name                              = "snet-pep-${var.environment}"
+  resource_group_name               = var.resource_group_name
+  virtual_network_name              = azurerm_virtual_network.this.name
+  address_prefixes                  = [var.private_endpoint_subnet_cidr]
+  private_endpoint_network_policies = "Disabled"
 }
 
 # ---------------------------------------------------------------------------
