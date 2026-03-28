@@ -18,12 +18,6 @@ variable "tenant_id" {
   default     = "63a9a134-4fad-44e4-a0cf-fd45d4185168"
 }
 
-variable "client_id" {
-  description = "App Registration client ID (service principal with OIDC federation)"
-  type        = string
-  default     = "93ec5cf8-4518-461f-96a6-b44fccf4a456"
-}
-
 variable "environment" {
   description = "Environment name (dev, staging, production)"
   type        = string
