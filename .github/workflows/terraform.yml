@@ -190,3 +190,31 @@ jobs:
       - name: Terraform Apply
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply tfplan
+
+# =============================================================================
+# JOB 3: POST-DEPLOYMENT VALIDATION
+# =============================================================================
+  validate:
+    name: "Validate - ${{ needs.plan.outputs.tf_environment }}"
+    needs: [plan, apply]
+    if: needs.apply.result == 'success'
+    runs-on: ubuntu-latest
+
+    env:
+      TF_ENVIRONMENT: ${{ needs.plan.outputs.tf_environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run Post-Deployment Validation
+        shell: pwsh
+        run: |
+          ./scripts/Post-Deployment-Validation.ps1 -Environment ${{ env.TF_ENVIRONMENT }}
