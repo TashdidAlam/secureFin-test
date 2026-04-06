@@ -247,8 +247,8 @@ module "bastion" {
   tags                = module.tags.tags
 
   # VNet peering to current environment's VNet
-  env_vnet_id                 = module.network.vnet_id
-  env_vnet_name               = module.network.vnet_name
+  env_vnet_id                  = module.network.vnet_id
+  env_vnet_name                = module.network.vnet_name
   env_vnet_resource_group_name = module.rg_core.name
 
   # Private DNS zone link for AKS API server resolution
