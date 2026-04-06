@@ -1,10 +1,9 @@
 # =============================================================================
-# SecureFin Platform - Terraform CI/CD Pipeline (FINAL - STABLE)
+# SecureFin Platform - Terraform CI/CD Pipeline
 # =============================================================================
-# FIXES APPLIED:
-# - Removed OIDC subject conflict from GitHub Environment
-# - Uses branch-based federated identity only
-# - Keeps GitHub Environment approval safely
+# 3-Job Pipeline: Plan → Apply → Validate
+# Actions: Node.js 24 compatible (updated April 2026)
+# Auth: OIDC Workload Identity Federation (zero secrets)
 # =============================================================================
 
 name: "Terraform CI/CD - SecureFin Platform"

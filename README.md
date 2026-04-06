@@ -1,63 +1,72 @@
 # SecureFin Platform — Infrastructure as Code
 
-Production-grade Terraform infrastructure and CI/CD pipeline for the SecureFin fintech platform on Azure.
+Production-grade Terraform infrastructure, security & compliance layer, and CI/CD pipeline for the SecureFin fintech platform on Azure.
+
+## Current Status
+
+| Module | Status | Description |
+|--------|--------|-------------|
+| Module 1 — Foundation & CI/CD | ✅ Complete | Terraform root, modules, pipeline, OIDC auth |
+| Module 2 — Security & Compliance | ✅ Complete | Network, AKS, Identity, RBAC, Policy, Validation |
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Azure (westus3)                           │
+│                                                             │
+│  rg-securefin-core-dev          rg-securefin-aks-dev        │
+│  ┌─────────────────────┐       ┌──────────────────────┐    │
+│  │ VNet 10.0.0.0/16    │       │ AKS (Private Cluster)│    │
+│  │  ├─ aks-subnet      │◄─────►│  K8s 1.33            │    │
+│  │  │  10.0.1.0/24     │       │  Azure CNI           │    │
+│  │  └─ pep-subnet      │       │  1x Standard_D2s_v3  │    │
+│  │     10.0.2.0/24     │       │  Key Vault CSI       │    │
+│  │                     │       │  OMS Agent (LAW)     │    │
+│  │ Managed Identity    │       │  Azure Policy        │    │
+│  │ Log Analytics (LAW) │       │  Ephemeral OS Disk   │    │
+│  └─────────────────────┘       └──────────────────────┘    │
+│                                                             │
+│  rg-securefin-data-dev          Azure Policy               │
+│  ┌─────────────────────┐       ┌──────────────────────┐    │
+│  │ (Future: databases, │       │ Required Tags        │    │
+│  │  caches, storage)   │       │ Deny Public IPs      │    │
+│  └─────────────────────┘       │ Allowed Locations    │    │
+│                                └──────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ## Quick Start
 
 ### Prerequisites
 
-- Terraform >= 1.5.0
-- Azure CLI
-- An Azure AD App Registration with OIDC federated credentials for GitHub Actions
-- A GitHub repository with the following **repository variables** configured:
-  - `AZURE_CLIENT_ID` — `93ec5cf8-4518-461f-96a6-b44fccf4a456`
-  - `AZURE_TENANT_ID` — `63a9a134-4fad-44e4-a0cf-fd45d4185168`
-  - `AZURE_SUBSCRIPTION_ID` — `48eeedd2-fbbe-4c61-803d-2a8ba099bf0b`
+- Terraform >= 1.5.0 (CI uses 1.5.0, local dev: any >= 1.5.0)
+- Azure CLI (`az login`)
+- GitHub repository variables configured (see below)
 
-### 1. Configure GitHub Repository Variables
+### GitHub Repository Variables
 
-In your GitHub repository: **Settings → Secrets and variables → Actions → Variables tab**
-
-| Variable | Value |
-|----------|-------|
+| Variable | Description |
+|----------|-------------|
 | `AZURE_CLIENT_ID` | App Registration client ID (OIDC federation) |
 | `AZURE_TENANT_ID` | Azure AD tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Target Azure subscription ID |
 
-> **Note**: These are **repository variables**, not secrets. They are non-sensitive GUIDs.
-
-### 2. Ensure State Backend Exists
-
-The state backend must exist before running the pipeline:
+### Deploy via CI/CD
 
 ```bash
-# Verify storage account and container exist
-az storage container show \
-  --name tfstate \
-  --account-name tashdidstatebackup68 \
-  --auth-mode login
-
-# Ensure the CI/CD service principal has Storage Blob Data Contributor
-az role assignment create \
-  --assignee 93ec5cf8-4518-461f-96a6-b44fccf4a456 \
-  --role "Storage Blob Data Contributor" \
-  --scope $(az storage account show --name tashdidstatebackup68 --resource-group rg-securefin-tfstate --query id -o tsv)
-```
-
-### 3. Deploy via PR
-
-```bash
-# Feature branch — open PR to dev for plan-only
-git checkout -b feature-login
+# Feature branch → PR to dev → plan only
+git checkout -b feature/my-change
 # Make changes to infra/terraform/
-git push origin feature-login
+git push origin feature/my-change
 # Open PR targeting dev → pipeline runs plan
 
-# After review, merge to dev
-# (Apply requires push-triggered FIC — see docs/ARCHITECTURE.md)
+# Merge to dev → auto-apply
+# Merge dev → staging → approval required
+# Merge staging → production → approval required
 ```
 
-### 4. Local Development
+### Local Development
 
 ```bash
 az login
@@ -69,35 +78,80 @@ terraform plan -var-file=environments/dev/dev.tfvars
 ## Project Structure
 
 ```
-infra/terraform/
-├── main.tf               # Shared configuration (all environments)
-├── variables.tf          # Shared variable declarations
-├── outputs.tf            # Shared outputs
-├── providers.tf          # AzureRM provider (auth via ARM_* env vars)
-├── versions.tf           # Terraform & provider version pins
-├── backend.tf            # Backend config (values injected via backend.hcl)
-├── modules/
-│   ├── tags/             # Mandatory tagging strategy
-│   └── resource-group/   # Resource group with naming enforcement
-└── environments/
-    ├── dev/
-    │   ├── backend.hcl   # State backend values + key
-    │   └── dev.tfvars    # Dev variable values
-    ├── staging/
-    │   ├── backend.hcl
-    │   └── staging.tfvars
-    └── production/
-        ├── backend.hcl
-        └── production.tfvars
+secureFin-test/
+├── .github/workflows/
+│   └── terraform.yml                  # CI/CD: Plan → Apply → Validate
+├── docs/
+│   ├── ARCHITECTURE.md                # Full architecture documentation
+│   ├── MODULE_1_REPORT.md             # Module 1 completion report
+│   └── MODULE_2_REPORT.md             # Module 2 completion report
+├── infra/terraform/
+│   ├── main.tf                        # Root module composition
+│   ├── variables.tf                   # Shared variables
+│   ├── outputs.tf                     # Root outputs
+│   ├── providers.tf                   # AzureRM provider (OIDC)
+│   ├── versions.tf                    # Version constraints
+│   ├── backend.tf                     # Azure backend config
+│   ├── modules/
+│   │   ├── tags/                      # Mandatory tagging
+│   │   ├── resource-group/            # RG with naming validation
+│   │   ├── network/                   # VNet, subnets, NSG
+│   │   ├── aks/                       # Private AKS cluster
+│   │   ├── identity/                  # Workload Identity Federation
+│   │   └── policy/                    # Azure Policy guardrails
+│   └── environments/
+│       ├── dev/                       # Dev backend + tfvars
+│       ├── staging/                   # Staging backend + tfvars
+│       └── production/                # Production backend + tfvars
+├── k8s/
+│   ├── gatekeeper/                    # OPA constraint templates + constraints
+│   ├── network-policies/              # Default-deny + app traffic rules
+│   └── workload-identity/             # Kubernetes service account for WIF
+├── scripts/
+│   └── Post-Deployment-Validation.ps1 # 52-check validation script
+├── .gitignore
+├── .tflint.hcl                        # TFLint config (terraform + azurerm)
+└── README.md
 ```
 
-## Architecture
+## CI/CD Pipeline
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full architecture documentation.
+Three-job pipeline: **Plan → Apply → Validate**
+
+| Job | Trigger | Description |
+|-----|---------|-------------|
+| Plan | PR + Push | fmt, tflint, checkov, init, validate, plan |
+| Apply | Push only | Downloads plan artifact, applies with approval gates |
+| Validate | After Apply | Runs 52-check PowerShell validation script |
+
+### Quality Gates
+
+| Gate | Tool | Mode |
+|------|------|------|
+| Format | `terraform fmt` | Hard fail |
+| Lint | TFLint (azurerm ruleset) | Hard fail |
+| Security | Checkov (CIS/PCI/SOC2) | Soft fail |
+| Validation | `terraform validate` | Hard fail |
+| Approval | GitHub Environments | Blocking (staging/prod) |
 
 ## Security
 
-- **OIDC authentication** — no client secrets, certificates, or storage keys
+- **Zero-secret architecture** — OIDC authentication, no client secrets or keys
+- **Private AKS** — API server not publicly accessible
+- **Azure Policy** — required tags, deny public IPs, allowed locations
+- **Network Policies** — default-deny with explicit allow rules
+- **Workload Identity** — pods authenticate via Kubernetes service accounts
+- **Key Vault CSI** — secrets injected as volumes, not env vars
+- **Checkov scanning** — shift-left security in CI pipeline
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full architecture, design decisions, auth flows |
+| [docs/MODULE_1_REPORT.md](docs/MODULE_1_REPORT.md) | Module 1 completion report |
+| [docs/MODULE_2_REPORT.md](docs/MODULE_2_REPORT.md) | Module 2 completion report |
+| [docs/ERRORS_AND_SOLUTIONS.md](docs/ERRORS_AND_SOLUTIONS.md) | Notable errors & how they were resolved |
 - **Azure AD-only storage access** — shared access keys disabled
 - **RBAC authorization** — Key Vault and Storage use Azure RBAC, not access policies
 - **Branch-based safety** — PRs can never run `terraform apply`

@@ -1,41 +1,60 @@
-# Local .terraform directories
+# =============================================================================
+# SecureFin Platform — .gitignore
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Terraform
+# ---------------------------------------------------------------------------
+# Local .terraform directories (providers, plugins — 700MB+)
 .terraform/
 
-# .tfstate files
+# State files (sensitive — stored in Azure Blob Storage backend)
 *.tfstate
 *.tfstate.*
-
-# Crash log files
-crash.log
-crash.*.log
-
-# WHY NOT excluding .tfvars: In SecureFin, tfvars files contain only
-# environment names, locations, and placeholder GUIDs — no real secrets.
-# Actual credentials are handled via OIDC (no secrets at all).
-# tfvars files MUST be committed so the CI/CD pipeline can reference them.
-# *.tfvars
-# *.tfvars.json
 
 # Plan output files (may contain sensitive planned values)
 *.tfplan
 tfplan
 
-# Ignore override files as they are usually used to override resources locally and so
-# are not checked in
+# Crash log files
+crash.log
+crash.*.log
+
+# Override files (local-only overrides, not for version control)
 override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
 
-# Ignore transient lock info files created by terraform apply
+# Lock info (transient, created during apply)
 .terraform.tfstate.lock.info
 
-# Include override files you do wish to add to version control using negated pattern
-# !example_override.tf
-
-# Include tfplan files to ignore the plan output of command: terraform plan -out=tfplan
-# example: *tfplan*
-
-# Ignore CLI configuration files
+# CLI configuration files
 .terraformrc
 terraform.rc
+
+# WHY NOT excluding .tfvars: SecureFin tfvars contain only environment
+# names, locations, and non-sensitive defaults — no secrets. Credentials
+# are handled via OIDC (zero secrets). tfvars MUST be committed so the
+# CI/CD pipeline can reference them.
+
+# ---------------------------------------------------------------------------
+# OS generated files
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ---------------------------------------------------------------------------
+# IDE / Editor
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# PowerShell / Scripts
+# ---------------------------------------------------------------------------
+*.ps1xml

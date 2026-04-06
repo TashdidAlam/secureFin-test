@@ -4,7 +4,7 @@
 
 1. [Overview](#overview)
 2. [Directory Structure](#directory-structure)
-3. [Bootstrap Layer](#bootstrap-layer)
+3. [State Backend](#state-backend)
 4. [Module Design](#module-design)
 5. [Environment Strategy](#environment-strategy)
 6. [CI/CD Pipeline](#cicd-pipeline)
@@ -19,82 +19,66 @@ SecureFin is a cloud-native fintech platform deployed on Azure using Terraform f
 
 - **Zero-secret authentication** via Azure Workload Identity (OIDC)
 - **Single shared Terraform root** — environments differ only by tfvars
-- **Modular, DRY infrastructure** with reusable Terraform modules
+- **Modular, DRY infrastructure** with 6 reusable Terraform modules
 - **Environment parity** across dev, staging, and production
 - **Branch-based deployment** with safety controls preventing unauthorized applies
+- **Private-by-default** AKS cluster with Azure Policy guardrails
+- **Automated post-deployment validation** (52 checks)
 
 ---
 
 ## Directory Structure
 
 ```
-securefin-platform/
-├── bootstrap/
-│   └── state/                    # State backend infrastructure (run once)
-│       ├── versions.tf
-│       ├── variables.tf
-│       ├── main.tf
-│       └── outputs.tf
-├── infra/
-│   └── terraform/
-│       ├── main.tf               # Shared root — all environments use this
-│       ├── variables.tf          # Shared variable declarations
-│       ├── outputs.tf            # Shared outputs
-│       ├── providers.tf          # AzureRM provider (auth via ARM_* env vars)
-│       ├── versions.tf           # Terraform & provider version constraints
-│       ├── backend.tf            # Backend config (values from backend.hcl)
-│       ├── modules/
-│       │   ├── tags/             # Centralized tagging strategy
-│       │   │   ├── variables.tf
-│       │   │   ├── main.tf
-│       │   │   └── outputs.tf
-│       │   └── resource-group/   # Resource group with naming enforcement
-│       │       ├── variables.tf
-│       │       ├── main.tf
-│       │       └── outputs.tf
-│       └── environments/
-│           ├── dev/
-│           │   ├── backend.hcl   # Backend values + state key
-│           │   └── dev.tfvars    # Dev-specific variable values
-│           ├── staging/
-│           │   ├── backend.hcl
-│           │   └── staging.tfvars
-│           └── production/
-│               ├── backend.hcl
-│               └── production.tfvars
+secureFin-test/
+├── .github/workflows/
+│   └── terraform.yml                  # CI/CD: Plan → Apply → Validate (3 jobs)
 ├── docs/
-├── .github/
-│   └── workflows/
-│       └── terraform.yml         # CI/CD pipeline
+│   ├── ARCHITECTURE.md                # This document
+│   ├── MODULE_1_REPORT.md             # Module 1 completion report
+│   ├── MODULE_2_REPORT.md             # Module 2 completion report
+│   └── ERRORS_AND_SOLUTIONS.md        # Notable errors & resolutions
+├── infra/terraform/
+│   ├── main.tf                        # Root module composition (all envs)
+│   ├── variables.tf                   # Shared variable declarations
+│   ├── outputs.tf                     # Root outputs
+│   ├── providers.tf                   # AzureRM 4.x provider (OIDC)
+│   ├── versions.tf                    # Terraform >= 1.5.0, AzureRM ~> 4.0
+│   ├── backend.tf                     # Azure Blob Storage backend
+│   ├── .terraform.lock.hcl            # Provider dependency lock
+│   ├── modules/
+│   │   ├── tags/                      # Mandatory compliance tagging
+│   │   ├── resource-group/            # RG with naming validation (rg- prefix)
+│   │   ├── network/                   # VNet, subnets, NSG
+│   │   ├── aks/                       # Private AKS cluster
+│   │   ├── identity/                  # Workload Identity Federation
+│   │   └── policy/                    # Azure Policy guardrails
+│   └── environments/
+│       ├── dev/                       # backend.hcl + dev.tfvars
+│       ├── staging/                   # backend.hcl + staging.tfvars
+│       └── production/                # backend.hcl + production.tfvars
+├── k8s/
+│   ├── gatekeeper/                    # OPA Gatekeeper constraints
+│   │   ├── constraint-templates/      # ACR-only, no-latest-tag, resource-limits
+│   │   └── constraints/               # Constraint instances
+│   ├── network-policies/              # Default-deny + app traffic allowlist
+│   └── workload-identity/             # K8s ServiceAccount for WIF
+├── scripts/
+│   └── Post-Deployment-Validation.ps1 # 52-check PowerShell validation
+├── .gitignore                         # Terraform, OS, IDE exclusions
+├── .tflint.hcl                        # TFLint with azurerm ruleset
 └── README.md
 ```
 
-### Key Design Decision: Shared Root
+### Key Design Decisions
 
-All Terraform configuration files (main.tf, variables.tf, outputs.tf, providers.tf, versions.tf, backend.tf) live in a **single root directory** (`infra/terraform/`). Environments are differentiated solely by:
-
-- **tfvars files** — environment-specific variable values (environment name, location, etc.)
-- **backend.hcl files** — backend configuration including the state file key
-
-This eliminates code duplication across environments. Adding a new resource or module is a single change — no need to edit 3 identical files.
+- **Single root, multiple tfvars**: All environments share the same Terraform code. Only `tfvars` and `backend.hcl` differ.
+- **No bootstrap directory**: State backend was pre-created manually (chicken-and-egg problem solved pragmatically).
+- **Provider registration**: Uses `resource_provider_registrations = "none"` with explicit `resource_providers_to_register` list to avoid 404s from deprecated namespaces.
 
 ---
 
-## Bootstrap Layer
-
-### Why Bootstrap is Separate
-
-Terraform needs a remote backend (Azure Blob Storage) to store its state files. But that storage account doesn't exist yet — it needs to be created first. This creates a chicken-and-egg problem:
-
-1. **Bootstrap** creates the state storage infrastructure using **local state**
-2. **Main infrastructure** then uses the bootstrapped storage as its remote backend
-
-The bootstrap layer:
-- Is run **once** by an operator with elevated permissions
-- Uses **local state** (committed securely or stored in a vault)
-- **Never** participates in CI/CD — it IS the foundation CI/CD depends on
-
-### State Backend
+## State Backend
 
 The project uses a pre-created Azure Storage Account for Terraform state:
 
@@ -110,6 +94,15 @@ The project uses a pre-created Azure Storage Account for Terraform state:
 
 ## Module Design
 
+### Module Dependency Chain
+
+```
+tags ──► rg_core ──► network ──► aks ──► workload_identity
+         rg_aks ─────────────────┘
+         rg_data
+         All RGs ──► policy
+```
+
 ### Tags Module
 
 **Purpose**: Enforce mandatory tagging across all SecureFin resources.
@@ -122,16 +115,66 @@ The project uses a pre-created Azure Storage Account for Terraform state:
 | CostCenter | SECUREFIN-P1 | Billing chargeback |
 | ManagedBy | Terraform | Lifecycle management tracking |
 
-The module accepts `additional_tags` for resource-specific tags while ensuring mandatory tags always win via merge order.
-
 ### Resource Group Module
 
 **Purpose**: Create resource groups with enforced naming conventions (`rg-` prefix validation) and mandatory tags.
 
-Each environment creates three isolated resource groups:
+Three isolated resource groups per environment:
 - `rg-securefin-core-{env}` — Networking, DNS, shared components
 - `rg-securefin-aks-{env}` — AKS cluster resources
 - `rg-securefin-data-{env}` — Databases, caches, data stores
+
+### Network Module
+
+**Purpose**: VNet with purpose-built subnets and NSG.
+
+| Resource | Configuration |
+|----------|---------------|
+| VNet | `vnet-securefin-{env}`, 10.0.0.0/16 |
+| AKS Subnet | `snet-securefin-aks-{env}`, 10.0.1.0/24 |
+| PEP Subnet | `snet-securefin-pep-{env}`, 10.0.2.0/24 |
+| NSG | `nsg-securefin-aks-{env}`, attached to AKS subnet |
+
+**Location**: `rg-securefin-core-{env}` (shared service, independent of compute lifecycle).
+
+### AKS Module
+
+**Purpose**: Private Kubernetes cluster optimized for free-tier with production-grade settings.
+
+| Setting | Value |
+|---------|-------|
+| Cluster Name | `aks-securefin-{env}` |
+| Kubernetes Version | 1.33 (auto-upgrade: stable channel) |
+| SKU | Free |
+| Network Plugin | Azure CNI |
+| Network Policy | Azure |
+| API Server | Private (not publicly accessible) |
+| Node Pool | 1x Standard_D2s_v3, ephemeral OS disk, max_pods=50 |
+| Addons | OMS Agent (LAW), Key Vault CSI, Azure Policy |
+| Identity | SystemAssigned |
+
+**RBAC**: AKS cluster identity gets Network Contributor on the AKS subnet for Azure CNI IP management.
+
+### Identity Module
+
+**Purpose**: Workload Identity Federation for pod-level Azure authentication.
+
+| Resource | Configuration |
+|----------|---------------|
+| Managed Identity | `id-securefin-workload-{env}` in `rg-securefin-core-{env}` |
+| Federated Credential | Bound to AKS OIDC issuer, namespace `default`, SA `app-sa` |
+
+**Why in core RG**: Identity survives AKS rebuilds — RBAC assignments to Key Vault, Storage, etc. persist.
+
+### Policy Module
+
+**Purpose**: Azure Policy guardrails applied to all three resource groups.
+
+| Policy | Effect | Description |
+|--------|--------|-------------|
+| Required Tags | Audit | Project, Environment, Owner, CostCenter, ManagedBy |
+| Deny Public IPs | Deny | Zero public-facing resources |
+| Allowed Locations | Deny | Restrict to westus3, westus2 |
 
 ---
 
@@ -181,15 +224,52 @@ For local development, use `az login` — the provider auto-detects the CLI sess
 
 ### Trigger Model
 
-The pipeline triggers on **pull requests** targeting `dev`, `staging`, or `production`:
+| Event | Target Branch | Plan | Apply | Validate |
+|-------|---------------|------|-------|----------|
+| `pull_request` | dev | ✅ | ❌ | ❌ |
+| `pull_request` | staging | ✅ | ❌ | ❌ |
+| `pull_request` | production | ✅ | ❌ | ❌ |
+| `push` | dev | ✅ | ✅ (auto) | ✅ |
+| `push` | staging | ✅ | ⏸️ (approval) | ✅ |
+| `push` | production | ✅ | ⏸️ (approval) | ✅ |
+
+### Pipeline Architecture (3 Jobs)
 
 ```
-feature-branch  ──PR → dev──▶  Plan ONLY (dev.tfvars)
-dev             ──PR → staging──▶  Plan ONLY (staging.tfvars)
-staging         ──PR → production──▶  Plan ONLY (production.tfvars)
+┌──────────────────────────────────────────────────────┐
+│              JOB 1: PLAN (always runs)                │
+│  checkout → env-detect → setup-terraform → azure     │
+│  login → fmt → tflint → checkov → init → validate    │
+│  → plan → upload-artifact (push only)                 │
+└──────────────────┬───────────────────────────────────┘
+                   │ (only if push event)
+                   ▼
+┌──────────────────────────────────────────────────────┐
+│     JOB 2: APPLY (push only, with approval)           │
+│  checkout → setup-terraform → azure login → init      │
+│  → download-artifact → terraform apply tfplan          │
+└──────────────────┬───────────────────────────────────┘
+                   │ (only if apply succeeded)
+                   ▼
+┌──────────────────────────────────────────────────────┐
+│     JOB 3: VALIDATE (post-deployment)                 │
+│  checkout → azure login → Post-Deployment-Validation  │
+│  → 52 automated checks (RG, network, AKS, LAW,       │
+│    identity, RBAC, policy)                             │
+└──────────────────────────────────────────────────────┘
 ```
 
-Apply is gated on push events (post-merge). The current FIC is configured for `pull_request` subject type, so only PRs authenticate successfully.
+### GitHub Actions Versions (Node.js 24)
+
+| Action | Version | Notes |
+|--------|---------|-------|
+| actions/checkout | v6 | Node.js 24 |
+| hashicorp/setup-terraform | v4 | Node.js 24 |
+| azure/login | v3 | Node.js 24 |
+| terraform-linters/setup-tflint | v6 | Node.js 24 |
+| bridgecrewio/checkov-action | v12 | Docker-based (not affected) |
+| actions/upload-artifact | v6 | Node.js 24 |
+| actions/download-artifact | v7 | Node.js 24 |
 
 ### Pipeline Steps
 
@@ -279,7 +359,7 @@ git push origin feature-branch
 
 In GitHub Actions logs, look for:
 ```
-Run azure/login@v2
+Run azure/login@v3
   with:
     client-id: ***
     tenant-id: ***
@@ -287,6 +367,21 @@ Run azure/login@v2
 ```
 
 No `client-secret` or `certificate` parameters should appear.
+
+### Post-Deployment Validation
+
+After a successful apply, Job 3 runs `Post-Deployment-Validation.ps1` which performs 52 automated checks:
+
+| Category | Checks |
+|----------|--------|
+| Resource Groups | Existence, location, mandatory tags |
+| Network | VNet CIDR, subnets, NSG association |
+| AKS | Cluster state, private API, Azure CNI, RBAC, addons |
+| Log Analytics | Workspace existence, retention |
+| Identity | Managed identity, federated credential |
+| RBAC | Network Contributor on AKS subnet |
+| Policy | Tag, public IP, location policy assignments |
+| Kubernetes | Node pool config, OMS agent, Key Vault CSI |
 
 ### Local Development
 
