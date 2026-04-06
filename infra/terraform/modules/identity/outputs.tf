@@ -11,25 +11,25 @@
 
 output "identity_id" {
   description = "Resource ID of the User Assigned Managed Identity"
-  value       = azurerm_user_assigned_identity.workload.id
+  value       = azurerm_user_assigned_identity.securefin_workload_id.id
 }
 
 output "identity_client_id" {
   description = "Client ID of the managed identity (used in K8s ServiceAccount annotation)"
-  value       = azurerm_user_assigned_identity.workload.client_id
+  value       = azurerm_user_assigned_identity.securefin_workload_id.client_id
 }
 
 output "identity_principal_id" {
   description = "Principal ID of the managed identity (used in Azure RBAC role assignments)"
-  value       = azurerm_user_assigned_identity.workload.principal_id
+  value       = azurerm_user_assigned_identity.securefin_workload_id.principal_id
 }
 
 output "identity_name" {
   description = "Name of the User Assigned Managed Identity"
-  value       = azurerm_user_assigned_identity.workload.name
+  value       = azurerm_user_assigned_identity.securefin_workload_id.name
 }
 
 output "federated_credential_id" {
   description = "Resource ID of the Federated Identity Credential"
-  value       = azurerm_federated_identity_credential.workload.id
+  value       = azurerm_federated_identity_credential.securefin_federated_cred.id
 }

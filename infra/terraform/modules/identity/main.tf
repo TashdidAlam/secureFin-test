@@ -34,7 +34,7 @@
 # workload identity (not a cluster identity or deployment identity).
 # ---------------------------------------------------------------------------
 
-resource "azurerm_user_assigned_identity" "workload" {
+resource "azurerm_user_assigned_identity" "securefin_workload_id" {
   name                = "id-${var.project}-workload-${var.environment}"
   location            = var.location
   resource_group_name = var.resource_group_name
@@ -64,9 +64,9 @@ resource "azurerm_user_assigned_identity" "workload" {
 # the ability to create pods in the target namespace with the target SA.
 # ---------------------------------------------------------------------------
 
-resource "azurerm_federated_identity_credential" "workload" {
+resource "azurerm_federated_identity_credential" "securefin_federated_cred" {
   name      = "fic-${var.project}-${var.k8s_namespace}-${var.k8s_service_account_name}-${var.environment}"
-  parent_id = azurerm_user_assigned_identity.workload.id
+  parent_id = azurerm_user_assigned_identity.securefin_workload_id.id
 
   # The AKS OIDC issuer URL — Azure AD only trusts tokens from this issuer
   issuer = var.oidc_issuer_url

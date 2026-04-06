@@ -27,10 +27,26 @@
 # =============================================================================
 
 # ---------------------------------------------------------------------------
+# Log Analytics Workspace (Container Insights)
+# ---------------------------------------------------------------------------
+# WHY: Checkov CKV_AZURE_4 requires AKS logging to Azure Monitor.
+# Uses PerGB2018 (default) pricing — ingestion from a single-node dev
+# cluster is < 1 GB/day, well within free-tier allowance.
+# ---------------------------------------------------------------------------
+resource "azurerm_log_analytics_workspace" "securefin_law" {
+  name                = "law-${var.project}-${var.environment}"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+  tags                = var.tags
+}
+
+# ---------------------------------------------------------------------------
 # AKS Cluster
 # ---------------------------------------------------------------------------
 
-resource "azurerm_kubernetes_cluster" "this" {
+resource "azurerm_kubernetes_cluster" "securefin_aks" {
   name                = "aks-${var.project}-${var.environment}"
   location            = var.location
   resource_group_name = var.resource_group_name
@@ -54,6 +70,14 @@ resource "azurerm_kubernetes_cluster" "this" {
   #   - Use Azure Arc-enabled Kubernetes (future module)
   # ---------------------------------------------------------------------------
   private_cluster_enabled = true
+
+  # ---------------------------------------------------------------------------
+  # UPGRADE CHANNEL (CKV_AZURE_171)
+  # ---------------------------------------------------------------------------
+  # WHY: Ensures the cluster receives automatic patch updates. "stable" applies
+  # well-tested patches without jumping minor versions unexpectedly.
+  # ---------------------------------------------------------------------------
+  automatic_upgrade_channel = "stable"
 
   # ---------------------------------------------------------------------------
   # OIDC + WORKLOAD IDENTITY
@@ -84,6 +108,28 @@ resource "azurerm_kubernetes_cluster" "this" {
   # (e.g., no privileged containers, require resource limits, ACR-only images).
   # ---------------------------------------------------------------------------
   azure_policy_enabled = true
+
+  # ---------------------------------------------------------------------------
+  # AZURE MONITOR — CONTAINER INSIGHTS (CKV_AZURE_4)
+  # ---------------------------------------------------------------------------
+  # WHY: Sends container logs, metrics, and inventory to Log Analytics.
+  # Required for compliance (CKV_AZURE_4) and production observability.
+  # Cost is minimal for a single-node dev cluster (< 1 GB/day ingestion).
+  # ---------------------------------------------------------------------------
+  oms_agent {
+    log_analytics_workspace_id = azurerm_log_analytics_workspace.securefin_law.id
+  }
+
+  # ---------------------------------------------------------------------------
+  # SECRETS STORE CSI DRIVER (CKV_AZURE_172)
+  # ---------------------------------------------------------------------------
+  # WHY: Enables mounting Azure Key Vault secrets as Kubernetes volumes.
+  # secret_rotation_enabled ensures secrets auto-refresh without pod restarts.
+  # The CSI driver addon itself is free — no extra Azure cost.
+  # ---------------------------------------------------------------------------
+  key_vault_secrets_provider {
+    secret_rotation_enabled = true
+  }
 
   # ---------------------------------------------------------------------------
   # DISABLE LOCAL ACCOUNTS
@@ -142,6 +188,8 @@ resource "azurerm_kubernetes_cluster" "this" {
     vm_size              = var.system_node_vm_size
     vnet_subnet_id       = var.aks_subnet_id
     os_disk_size_gb      = 30
+    os_disk_type         = "Ephemeral"
+    max_pods             = 50
     type                 = "VirtualMachineScaleSets"
     auto_scaling_enabled = false
 

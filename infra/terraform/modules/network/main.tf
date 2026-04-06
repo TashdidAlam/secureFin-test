@@ -30,7 +30,7 @@
 # traffic between services stays on the Azure backbone (no public internet).
 # ---------------------------------------------------------------------------
 
-resource "azurerm_virtual_network" "this" {
+resource "azurerm_virtual_network" "securefin_vnet" {
   name                = "vnet-${var.project}-${var.environment}"
   location            = var.location
   resource_group_name = var.resource_group_name
@@ -49,10 +49,10 @@ resource "azurerm_virtual_network" "this" {
 #   for PaaS connectivity (stronger isolation than service endpoints).
 # ---------------------------------------------------------------------------
 
-resource "azurerm_subnet" "aks" {
+resource "azurerm_subnet" "securefin_aks_snet" {
   name                 = "snet-aks-${var.environment}"
   resource_group_name  = var.resource_group_name
-  virtual_network_name = azurerm_virtual_network.this.name
+  virtual_network_name = azurerm_virtual_network.securefin_vnet.name
   address_prefixes     = [var.aks_subnet_cidr]
 }
 
@@ -68,10 +68,10 @@ resource "azurerm_subnet" "aks" {
 #   service firewall and private DNS configuration
 # ---------------------------------------------------------------------------
 
-resource "azurerm_subnet" "private_endpoints" {
+resource "azurerm_subnet" "securefin_pep_snet" {
   name                              = "snet-pep-${var.environment}"
   resource_group_name               = var.resource_group_name
-  virtual_network_name              = azurerm_virtual_network.this.name
+  virtual_network_name              = azurerm_virtual_network.securefin_vnet.name
   address_prefixes                  = [var.private_endpoint_subnet_cidr]
   private_endpoint_network_policies = "Disabled"
 }
@@ -95,7 +95,7 @@ resource "azurerm_subnet" "private_endpoints" {
 # 4096:    Explicit deny-all (catch-all)
 # ---------------------------------------------------------------------------
 
-resource "azurerm_network_security_group" "aks" {
+resource "azurerm_network_security_group" "securefin_aks_nsg" {
   name                = "nsg-aks-${var.project}-${var.environment}"
   location            = var.location
   resource_group_name = var.resource_group_name
@@ -196,12 +196,56 @@ resource "azurerm_network_security_group" "aks" {
   }
 
   # -------------------------------------------------------------------------
+  # Rule: Allow outbound HTTPS to Internet
+  # -------------------------------------------------------------------------
+  # WHY: AKS nodes need outbound HTTPS for provisioning and runtime:
+  #   - packages.microsoft.com (apt packages, AKS extensions)
+  #   - mcr.microsoft.com (base container images — NOT in AzureCloud tag)
+  #   - azure.archive.ubuntu.com (OS security patches)
+  #   - login.microsoftonline.com (AAD token exchange)
+  # Without this, CSE fails with OutboundConnFail (exit code 50).
+  #
+  # PRODUCTION NOTE: Replace with Azure Firewall + FQDN filtering for
+  # granular egress control. This broad rule is acceptable for dev/test.
+  # -------------------------------------------------------------------------
+  security_rule {
+    name                       = "AllowInternetOutboundHttps"
+    priority                   = 120
+    direction                  = "Outbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "VirtualNetwork"
+    destination_address_prefix = "Internet"
+  }
+
+  # -------------------------------------------------------------------------
+  # Rule: Allow outbound HTTP to Internet
+  # -------------------------------------------------------------------------
+  # WHY: Some package repos (azure.archive.ubuntu.com, security.ubuntu.com)
+  # serve apt packages over HTTP (port 80). Required during node bootstrap.
+  # -------------------------------------------------------------------------
+  security_rule {
+    name                       = "AllowInternetOutboundHttp"
+    priority                   = 130
+    direction                  = "Outbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "VirtualNetwork"
+    destination_address_prefix = "Internet"
+  }
+
+  # -------------------------------------------------------------------------
   # Rule: Deny all other outbound traffic
   # -------------------------------------------------------------------------
-  # WHY: Prevents data exfiltration. AKS nodes should only talk to Azure
-  # services and internal VNet — not arbitrary internet destinations.
-  # When a NAT Gateway is added later, this rule will be refined to allow
-  # specific outbound destinations (e.g., OS update repos).
+  # WHY: Prevents data exfiltration on non-HTTP(S) ports. AKS nodes can
+  # reach Azure services (443), package repos (80/443), and VNet peers,
+  # but all other outbound (SSH, FTP, custom ports) is blocked.
+  # When Azure Firewall is added, this rule stays and the Internet rules
+  # above are replaced with Firewall-routed FQDN rules.
   # -------------------------------------------------------------------------
   security_rule {
     name                       = "DenyAllOutbound"
@@ -224,9 +268,9 @@ resource "azurerm_network_security_group" "aks" {
 # are enforced on the AKS subnet from the moment it's created.
 # ---------------------------------------------------------------------------
 
-resource "azurerm_subnet_network_security_group_association" "aks" {
-  subnet_id                 = azurerm_subnet.aks.id
-  network_security_group_id = azurerm_network_security_group.aks.id
+resource "azurerm_subnet_network_security_group_association" "securefin_aks_nsg_assoc" {
+  subnet_id                 = azurerm_subnet.securefin_aks_snet.id
+  network_security_group_id = azurerm_network_security_group.securefin_aks_nsg.id
 }
 
 # ---------------------------------------------------------------------------
@@ -238,7 +282,7 @@ resource "azurerm_subnet_network_security_group_association" "aks" {
 # that flag unprotected subnets.
 # ---------------------------------------------------------------------------
 
-resource "azurerm_network_security_group" "pep" {
+resource "azurerm_network_security_group" "securefin_pep_nsg" {
   name                = "nsg-pep-${var.project}-${var.environment}"
   location            = var.location
   resource_group_name = var.resource_group_name
@@ -269,7 +313,7 @@ resource "azurerm_network_security_group" "pep" {
   }
 }
 
-resource "azurerm_subnet_network_security_group_association" "pep" {
-  subnet_id                 = azurerm_subnet.private_endpoints.id
-  network_security_group_id = azurerm_network_security_group.pep.id
+resource "azurerm_subnet_network_security_group_association" "securefin_pep_nsg_assoc" {
+  subnet_id                 = azurerm_subnet.securefin_pep_snet.id
+  network_security_group_id = azurerm_network_security_group.securefin_pep_nsg.id
 }

@@ -22,5 +22,6 @@ provider "azurerm" {
     "Microsoft.ManagedIdentity",
     "Microsoft.Authorization",
     "Microsoft.Resources",
+    "Microsoft.OperationalInsights",
   ]
 }

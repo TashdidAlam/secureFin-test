@@ -8,15 +8,15 @@
 
 output "name" {
   description = "The name of the resource group"
-  value       = azurerm_resource_group.this.name
+  value       = azurerm_resource_group.securefin_rg.name
 }
 
 output "location" {
   description = "The Azure region of the resource group"
-  value       = azurerm_resource_group.this.location
+  value       = azurerm_resource_group.securefin_rg.location
 }
 
 output "id" {
   description = "The resource ID of the resource group"
-  value       = azurerm_resource_group.this.id
+  value       = azurerm_resource_group.securefin_rg.id
 }

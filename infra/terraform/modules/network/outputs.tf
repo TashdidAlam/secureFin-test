@@ -14,50 +14,50 @@
 
 output "vnet_id" {
   description = "Resource ID of the Virtual Network"
-  value       = azurerm_virtual_network.this.id
+  value       = azurerm_virtual_network.securefin_vnet.id
 }
 
 output "vnet_name" {
   description = "Name of the Virtual Network"
-  value       = azurerm_virtual_network.this.name
+  value       = azurerm_virtual_network.securefin_vnet.name
 }
 
 output "aks_subnet_id" {
   description = "Resource ID of the AKS subnet (used by AKS module for node/pod placement)"
-  value       = azurerm_subnet.aks.id
+  value       = azurerm_subnet.securefin_aks_snet.id
 }
 
 output "aks_subnet_name" {
   description = "Name of the AKS subnet"
-  value       = azurerm_subnet.aks.name
+  value       = azurerm_subnet.securefin_aks_snet.name
 }
 
 output "private_endpoint_subnet_id" {
   description = "Resource ID of the private endpoints subnet (used by future PaaS modules)"
-  value       = azurerm_subnet.private_endpoints.id
+  value       = azurerm_subnet.securefin_pep_snet.id
 }
 
 output "private_endpoint_subnet_name" {
   description = "Name of the private endpoints subnet"
-  value       = azurerm_subnet.private_endpoints.name
+  value       = azurerm_subnet.securefin_pep_snet.name
 }
 
 output "aks_nsg_id" {
   description = "Resource ID of the AKS NSG (for audit and diagnostic logging)"
-  value       = azurerm_network_security_group.aks.id
+  value       = azurerm_network_security_group.securefin_aks_nsg.id
 }
 
 output "aks_nsg_name" {
   description = "Name of the AKS NSG"
-  value       = azurerm_network_security_group.aks.name
+  value       = azurerm_network_security_group.securefin_aks_nsg.name
 }
 
 output "pep_nsg_id" {
   description = "Resource ID of the Private Endpoints NSG (for audit and diagnostic logging)"
-  value       = azurerm_network_security_group.pep.id
+  value       = azurerm_network_security_group.securefin_pep_nsg.id
 }
 
 output "pep_nsg_name" {
   description = "Name of the Private Endpoints NSG"
-  value       = azurerm_network_security_group.pep.name
+  value       = azurerm_network_security_group.securefin_pep_nsg.name
 }

@@ -143,7 +143,7 @@ module "workload_identity" {
 # SCOPE: Limited to the AKS subnet only (not the entire VNet) — least
 # privilege. The cluster identity can't modify other subnets or the VNet.
 # ---------------------------------------------------------------------------
-resource "azurerm_role_assignment" "aks_network_contributor" {
+resource "azurerm_role_assignment" "securefin_aks_network_role" {
   scope                = module.network.aks_subnet_id
   role_definition_name = "Network Contributor"
   principal_id         = module.aks.cluster_identity_principal_id
