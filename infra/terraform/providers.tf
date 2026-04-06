@@ -19,6 +19,7 @@ provider "azurerm" {
   resource_providers_to_register = [
     "Microsoft.Network",
     "Microsoft.ContainerService",
+    "Microsoft.ContainerRegistry",
     "Microsoft.ManagedIdentity",
     "Microsoft.Authorization",
     "Microsoft.Resources",

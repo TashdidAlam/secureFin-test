@@ -149,6 +149,56 @@ resource "azurerm_role_assignment" "securefin_aks_network_role" {
   principal_id         = module.aks.cluster_identity_principal_id
 }
 
+# ===========================================================================
+# MODULE 3 — CI/CD & GitOps Infrastructure
+# ===========================================================================
+# ACR stores container images built by the CI pipeline. AKS pulls images
+# from ACR via the kubelet managed identity (AcrPull role). No image pull
+# secrets or admin credentials are needed.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# ACR: Azure Container Registry
+# ---------------------------------------------------------------------------
+# WHY in rg_core: ACR is a shared service — it stores images consumed by
+# AKS clusters across all environments. Placing it in the core RG ensures
+# the registry survives cluster rebuilds and can serve multiple clusters.
+#
+# DEPENDENCY: No hard dependencies — ACR can be created in parallel with
+# AKS. The AcrPull role assignment below is what links them.
+# ---------------------------------------------------------------------------
+module "acr" {
+  source = "./modules/acr"
+
+  resource_group_name = module.rg_core.name
+  location            = module.rg_core.location
+  environment         = var.environment
+  project             = var.project
+  tags                = module.tags.tags
+}
+
+# ---------------------------------------------------------------------------
+# RBAC: Grant AKS kubelet identity AcrPull on the Container Registry
+# ---------------------------------------------------------------------------
+# WHY: AKS nodes use the kubelet managed identity (not the cluster identity)
+# to pull container images. AcrPull is the least-privilege built-in role
+# that grants read-only access to registry images.
+#
+# WHY kubelet identity (not cluster identity): The cluster identity manages
+# Azure resources (VMs, disks, LBs). The kubelet identity is what actually
+# runs on each node and pulls images. Using the correct identity follows
+# the separation-of-duties principle.
+#
+# SCOPE: Limited to this specific ACR instance — the kubelet can't pull
+# from any other registry in the subscription.
+# ---------------------------------------------------------------------------
+resource "azurerm_role_assignment" "securefin_aks_acr_pull" {
+  scope                            = module.acr.acr_id
+  role_definition_name             = "AcrPull"
+  principal_id                     = module.aks.kubelet_identity_object_id
+  skip_service_principal_aad_check = true
+}
+
 # ---------------------------------------------------------------------------
 # Azure Policy: Compliance Guardrails
 # ---------------------------------------------------------------------------
