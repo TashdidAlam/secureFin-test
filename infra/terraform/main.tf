@@ -227,14 +227,24 @@ module "rg_bastion" {
 # ---------------------------------------------------------------------------
 # Data source: Find the AKS private DNS zone in the MC_ resource group
 # ---------------------------------------------------------------------------
-# WHY: Private AKS creates a DNS zone (privatelink.<region>.azmk8s.io) linked
-# only to the AKS VNet. We need to link it to the Bastion VNet so the Jump Box
-# can resolve the AKS API server hostname.
+# WHY: Private AKS in "System" mode creates a GUID-prefixed DNS zone
+# (e.g., <guid>.privatelink.<region>.azmk8s.io) in the MC_ resource group.
+# We can't hardcode the zone name, so we discover it dynamically by listing
+# all private DNS zones in the MC_ RG and filtering by suffix.
 # ---------------------------------------------------------------------------
 
-data "azurerm_private_dns_zone" "aks" {
-  name                = "privatelink.${var.location}.azmk8s.io"
+data "azurerm_resources" "aks_dns_zones" {
   resource_group_name = module.aks.node_resource_group
+  type                = "Microsoft.Network/privateDnsZones"
+}
+
+locals {
+  # Filter to find the zone ending with privatelink.<region>.azmk8s.io
+  aks_dns_zone_suffix = "privatelink.${var.location}.azmk8s.io"
+  aks_dns_zone_name = one([
+    for r in data.azurerm_resources.aks_dns_zones.resources :
+    r.name if endswith(r.name, local.aks_dns_zone_suffix)
+  ])
 }
 
 module "bastion" {
@@ -252,8 +262,8 @@ module "bastion" {
   env_vnet_resource_group_name = module.rg_core.name
 
   # Private DNS zone link for AKS API server resolution
-  aks_private_dns_zone_name           = data.azurerm_private_dns_zone.aks.name
-  aks_private_dns_zone_resource_group = data.azurerm_private_dns_zone.aks.resource_group_name
+  aks_private_dns_zone_name           = local.aks_dns_zone_name != null ? local.aks_dns_zone_name : ""
+  aks_private_dns_zone_resource_group = local.aks_dns_zone_name != null ? module.aks.node_resource_group : ""
 }
 
 # ---------------------------------------------------------------------------

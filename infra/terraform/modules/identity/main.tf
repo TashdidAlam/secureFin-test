@@ -65,8 +65,8 @@ resource "azurerm_user_assigned_identity" "securefin_workload_id" {
 # ---------------------------------------------------------------------------
 
 resource "azurerm_federated_identity_credential" "securefin_federated_cred" {
-  name      = "fic-${var.project}-${var.k8s_namespace}-${var.k8s_service_account_name}-${var.environment}"
-  parent_id = azurerm_user_assigned_identity.securefin_workload_id.id
+  name                      = "fic-${var.project}-${var.k8s_namespace}-${var.k8s_service_account_name}-${var.environment}"
+  user_assigned_identity_id = azurerm_user_assigned_identity.securefin_workload_id.id
 
   # The AKS OIDC issuer URL — Azure AD only trusts tokens from this issuer
   issuer = var.oidc_issuer_url
