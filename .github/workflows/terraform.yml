@@ -56,7 +56,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # ------------------------------------------------------------
       # Detect environment
@@ -80,12 +80,12 @@ jobs:
       # Setup
       # ------------------------------------------------------------
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -99,7 +99,7 @@ jobs:
         run: terraform fmt -check -recursive
 
       - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v4
+        uses: terraform-linters/setup-tflint@v6
 
       - name: TFLint
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -138,7 +138,7 @@ jobs:
       # ------------------------------------------------------------
       - name: Upload Plan Artifact
         if: steps.env-config.outputs.apply_allowed == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: tfplan-${{ env.TF_ENVIRONMENT }}
           path: ${{ env.TF_WORKING_DIR }}/tfplan
@@ -161,15 +161,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -182,7 +182,7 @@ jobs:
           terraform init -backend-config=${BACKEND_HCL}
 
       - name: Download Plan Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: tfplan-${{ env.TF_ENVIRONMENT }}
           path: ${{ env.TF_WORKING_DIR }}
@@ -205,10 +205,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
