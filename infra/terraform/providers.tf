@@ -24,5 +24,6 @@ provider "azurerm" {
     "Microsoft.Authorization",
     "Microsoft.Resources",
     "Microsoft.OperationalInsights",
+    "Microsoft.Compute",
   ]
 }

@@ -61,19 +61,35 @@ resource "azurerm_resource_group_policy_assignment" "securefin_require_tag_assig
 # direct public IP. Public IPs bypass the network perimeter, creating an
 # uncontrolled ingress/egress path that violates zero-trust.
 #
-# HOW: Denies creation of Microsoft.Network/publicIPAddresses resources.
+# EXCEPTION: Azure Bastion requires a public IP by design — it's a
+# Microsoft-managed PaaS that tunnels SSH/RDP over TLS. The Bastion PIP
+# is NOT an uncontrolled ingress path: traffic terminates at the Bastion
+# service, which then proxies to VNet-internal targets only.
+#
+# HOW: Denies Microsoft.Network/publicIPAddresses unless the name starts
+# with "pip-bastion-" (the Bastion module naming convention).
 # ---------------------------------------------------------------------------
 resource "azurerm_policy_definition" "securefin_deny_pip" {
   name         = "deny-public-ip-${var.project}-${var.environment}"
   policy_type  = "Custom"
   mode         = "Indexed"
   display_name = "Deny Public IP creation (${var.project}-${var.environment})"
-  description  = "Prevents creation of public IP addresses to enforce private-only networking for ${var.project}."
+  description  = "Prevents creation of public IP addresses (except Bastion) to enforce private-only networking for ${var.project}."
 
   policy_rule = jsonencode({
     if = {
-      field  = "type"
-      equals = "Microsoft.Network/publicIPAddresses"
+      allOf = [
+        {
+          field  = "type"
+          equals = "Microsoft.Network/publicIPAddresses"
+        },
+        {
+          not = {
+            field = "name"
+            like  = "pip-bastion-*"
+          }
+        }
+      ]
     }
     then = {
       effect = "Deny"

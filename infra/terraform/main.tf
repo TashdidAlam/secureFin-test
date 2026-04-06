@@ -200,6 +200,63 @@ resource "azurerm_role_assignment" "securefin_aks_acr_pull" {
 }
 
 # ---------------------------------------------------------------------------
+# Bastion + Jump Box: Secure Admin Access to Private AKS
+# ---------------------------------------------------------------------------
+# WHY SEPARATE RG: Bastion is a shared admin tool — one Bastion serves ALL
+# environments (dev/staging/prod) via VNet peering. Isolating it in its own
+# RG allows independent lifecycle (destroy/recreate without affecting workloads)
+# and prevents Azure Policy conflicts (e.g., "Deny Public IP" on core RG
+# doesn't block Bastion's required public IP).
+#
+# ARCHITECTURE:
+#   Bastion VNet (10.1.0.0/16) ←── VNet Peering ──→ Env VNet (10.0.0.0/16)
+#   ├── AzureBastionSubnet (10.1.0.0/26)
+#   └── snet-jumpbox (10.1.1.0/27) ──kubectl──→ Private AKS API
+#
+# COST: ~$155/mo total (1 Bastion + 1 VM) vs ~$155/env if per-environment
+# ---------------------------------------------------------------------------
+
+module "rg_bastion" {
+  source = "./modules/resource-group"
+
+  name     = "rg-${var.project}-bastion"
+  location = var.location
+  tags     = module.tags.tags
+}
+
+# ---------------------------------------------------------------------------
+# Data source: Find the AKS private DNS zone in the MC_ resource group
+# ---------------------------------------------------------------------------
+# WHY: Private AKS creates a DNS zone (privatelink.<region>.azmk8s.io) linked
+# only to the AKS VNet. We need to link it to the Bastion VNet so the Jump Box
+# can resolve the AKS API server hostname.
+# ---------------------------------------------------------------------------
+
+data "azurerm_private_dns_zone" "aks" {
+  name                = "privatelink.${var.location}.azmk8s.io"
+  resource_group_name = module.aks.node_resource_group
+}
+
+module "bastion" {
+  source = "./modules/bastion"
+
+  resource_group_name = module.rg_bastion.name
+  location            = module.rg_bastion.location
+  environment         = var.environment
+  project             = var.project
+  tags                = module.tags.tags
+
+  # VNet peering to current environment's VNet
+  env_vnet_id                 = module.network.vnet_id
+  env_vnet_name               = module.network.vnet_name
+  env_vnet_resource_group_name = module.rg_core.name
+
+  # Private DNS zone link for AKS API server resolution
+  aks_private_dns_zone_name           = data.azurerm_private_dns_zone.aks.name
+  aks_private_dns_zone_resource_group = data.azurerm_private_dns_zone.aks.resource_group_name
+}
+
+# ---------------------------------------------------------------------------
 # Azure Policy: Compliance Guardrails
 # ---------------------------------------------------------------------------
 # WHY: Azure Policy enforces organizational standards at the ARM layer —
@@ -223,8 +280,9 @@ module "policy" {
   project     = var.project
 
   resource_group_ids = {
-    core = module.rg_core.id
-    aks  = module.rg_aks.id
-    data = module.rg_data.id
+    core    = module.rg_core.id
+    aks     = module.rg_aks.id
+    data    = module.rg_data.id
+    bastion = module.rg_bastion.id
   }
 }
