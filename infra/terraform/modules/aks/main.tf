@@ -43,6 +43,27 @@ resource "azurerm_log_analytics_workspace" "securefin_law" {
 }
 
 # ---------------------------------------------------------------------------
+# Container Insights Solution (explicit)
+# ---------------------------------------------------------------------------
+# WHY: AKS oms_agent auto-creates a ContainerInsights solution without tags.
+# Tag enforcement policies block untagged resources. Creating it explicitly
+# with tags prevents RequestDisallowedByPolicy errors during AKS provisioning.
+# ---------------------------------------------------------------------------
+resource "azurerm_log_analytics_solution" "securefin_container_insights" {
+  solution_name         = "ContainerInsights"
+  location              = var.location
+  resource_group_name   = var.resource_group_name
+  workspace_resource_id = azurerm_log_analytics_workspace.securefin_law.id
+  workspace_name        = azurerm_log_analytics_workspace.securefin_law.name
+  tags                  = var.tags
+
+  plan {
+    publisher = "Microsoft"
+    product   = "OMSGallery/ContainerInsights"
+  }
+}
+
+# ---------------------------------------------------------------------------
 # AKS Cluster
 # ---------------------------------------------------------------------------
 
