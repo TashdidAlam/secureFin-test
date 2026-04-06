@@ -13,6 +13,14 @@ provider "azurerm" {
   tenant_id       = var.tenant_id
   use_oidc        = true
 
-  # resource_provider_registrations = "none" replaces skip_provider_registration in 4.x
+  # "none" alone caused 404s because Microsoft.Network wasn't registered.
+  # Explicitly register only the providers SecureFin needs.
   resource_provider_registrations = "none"
+  resource_providers_to_register = [
+    "Microsoft.Network",
+    "Microsoft.ContainerService",
+    "Microsoft.ManagedIdentity",
+    "Microsoft.Authorization",
+    "Microsoft.Resources",
+  ]
 }
