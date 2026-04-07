@@ -189,10 +189,10 @@ resource "azurerm_role_assignment" "securefin_aks_network_role" {
 module "dns" {
   source = "./modules/dns"
 
-  resource_group_name = module.rg_core.name
-  location            = var.location
-  environment         = var.environment
-  tags                = module.tags.tags
+  resource_group_name     = module.rg_core.name
+  location                = var.location
+  environment             = var.environment
+  tags                    = module.tags.tags
   env_vnet_id             = module.network.vnet_id
   bastion_vnet_id         = module.bastion.bastion_vnet_id
   enable_bastion_dns_link = true
