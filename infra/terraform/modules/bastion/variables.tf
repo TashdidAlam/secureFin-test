@@ -91,7 +91,7 @@ variable "aks_private_dns_zone_resource_group" {
 variable "jumpbox_vm_size" {
   description = "VM size for the Jump Box (B2s = 2 vCPU, 4 GB RAM — enough for kubectl/helm)"
   type        = string
-  default     = "Standard_B2s"
+  default     = "Standard_D2s_v3"
 }
 
 variable "admin_username" {
