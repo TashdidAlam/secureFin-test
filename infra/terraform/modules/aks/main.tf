@@ -91,6 +91,7 @@ resource "azurerm_kubernetes_cluster" "securefin_aks" {
   #   - Use Azure Arc-enabled Kubernetes (future module)
   # ---------------------------------------------------------------------------
   private_cluster_enabled = true
+  private_dns_zone_id     = var.private_dns_zone_id
 
   # ---------------------------------------------------------------------------
   # UPGRADE CHANNEL (CKV_AZURE_171)
@@ -180,14 +181,13 @@ resource "azurerm_kubernetes_cluster" "securefin_aks" {
   # ---------------------------------------------------------------------------
   # CLUSTER IDENTITY
   # ---------------------------------------------------------------------------
-  # WHY SystemAssigned: The cluster needs an identity to manage Azure
-  # resources (provision nodes, attach disks, configure LBs). SystemAssigned
-  # is simpler than UserAssigned for the cluster itself — Azure manages the
-  # lifecycle. Workload identity (for pods) uses a separate UserAssigned
-  # identity created in the identity module.
+  # WHY UserAssigned: Custom private DNS zone requires the AKS identity to
+  # have "Private DNS Zone Contributor" role BEFORE cluster creation. The
+  # identity is created at root level, granted RBAC, then passed here.
   # ---------------------------------------------------------------------------
   identity {
-    type = "SystemAssigned"
+    type         = "UserAssigned"
+    identity_ids = [var.aks_identity_id]
   }
 
   # ---------------------------------------------------------------------------

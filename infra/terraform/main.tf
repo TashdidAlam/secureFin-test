@@ -98,6 +98,25 @@ module "network" {
 # DEPENDENCY: Requires network module for aks_subnet_id (Azure CNI places
 # nodes and pods in this subnet).
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# User-Assigned Managed Identity for AKS Cluster
+# ---------------------------------------------------------------------------
+# WHY created at root (not inside AKS module): Custom private DNS zone
+# requires the AKS identity to have "Private DNS Zone Contributor" role
+# BEFORE the cluster is provisioned. By creating the identity at root level,
+# we can: (1) create identity → (2) grant RBAC → (3) pass to AKS module.
+# This breaks the circular dependency that would occur if the identity were
+# inside the AKS module.
+# ---------------------------------------------------------------------------
+
+resource "azurerm_user_assigned_identity" "aks_identity" {
+  name                = "id-aks-${var.project}-${var.environment}"
+  resource_group_name = module.rg_aks.name
+  location            = module.rg_aks.location
+  tags                = module.tags.tags
+}
+
 module "aks" {
   source = "./modules/aks"
 
@@ -108,6 +127,13 @@ module "aks" {
   tags                = module.tags.tags
   aks_subnet_id       = module.network.aks_subnet_id
   tenant_id           = var.tenant_id
+  private_dns_zone_id = module.dns.aks_dns_zone_id
+  aks_identity_id     = azurerm_user_assigned_identity.aks_identity.id
+
+  depends_on = [
+    azurerm_role_assignment.securefin_aks_network_role,
+    azurerm_role_assignment.securefin_aks_dns_contributor
+  ]
 }
 
 # ---------------------------------------------------------------------------
@@ -146,7 +172,43 @@ module "workload_identity" {
 resource "azurerm_role_assignment" "securefin_aks_network_role" {
   scope                = module.network.aks_subnet_id
   role_definition_name = "Network Contributor"
-  principal_id         = module.aks.cluster_identity_principal_id
+  principal_id         = azurerm_user_assigned_identity.aks_identity.principal_id
+}
+
+# ---------------------------------------------------------------------------
+# DNS: Private DNS Zones for services requiring private name resolution
+# ---------------------------------------------------------------------------
+# WHY: Creating our own private DNS zone instead of relying on AKS "System"
+# mode gives us predictable zone names, full control over VNet links, and
+# eliminates the GUID-prefix discovery hack. The zone is placed in rg_core
+# as a shared networking resource.
+#
+# DEPENDENCY: Requires network module (env VNet ID) and bastion module
+# (Bastion VNet ID) for VNet links used to resolve AKS API server.
+# ---------------------------------------------------------------------------
+module "dns" {
+  source = "./modules/dns"
+
+  resource_group_name     = module.rg_core.name
+  location                = var.location
+  environment             = var.environment
+  tags                    = module.tags.tags
+  env_vnet_id             = module.network.vnet_id
+  bastion_vnet_id         = module.bastion.bastion_vnet_id
+  enable_bastion_dns_link = true
+}
+
+# ---------------------------------------------------------------------------
+# RBAC: Grant AKS cluster identity Private DNS Zone Contributor
+# ---------------------------------------------------------------------------
+# WHY: When using a custom private DNS zone, AKS needs to create/update
+# DNS records for the API server private endpoint. Without this role,
+# cluster provisioning fails because AKS can't register its API server IP.
+# ---------------------------------------------------------------------------
+resource "azurerm_role_assignment" "securefin_aks_dns_contributor" {
+  scope                = module.dns.aks_dns_zone_id
+  role_definition_name = "Private DNS Zone Contributor"
+  principal_id         = azurerm_user_assigned_identity.aks_identity.principal_id
 }
 
 # ===========================================================================
@@ -209,9 +271,12 @@ resource "azurerm_role_assignment" "securefin_aks_acr_pull" {
 # doesn't block Bastion's required public IP).
 #
 # ARCHITECTURE:
-#   Bastion VNet (10.1.0.0/16) ←── VNet Peering ──→ Env VNet (10.0.0.0/16)
-#   ├── AzureBastionSubnet (10.1.0.0/26)
-#   └── snet-jumpbox (10.1.1.0/27) ──kubectl──→ Private AKS API
+#   Bastion VNet (10.2.0.0/16) ←── VNet Peering ──→ Env VNet (10.0.0.0/16)
+#   ├── AzureBastionSubnet (10.2.0.0/26)
+#   └── snet-jumpbox (10.2.1.0/27) ──kubectl──→ Private AKS API
+#
+# DNS: AKS private DNS zone links are handled by the dns module, which
+# links the zone to both the env VNet and the Bastion VNet.
 #
 # COST: ~$155/mo total (1 Bastion + 1 VM) vs ~$155/env if per-environment
 # ---------------------------------------------------------------------------
@@ -222,29 +287,6 @@ module "rg_bastion" {
   name     = "rg-${var.project}-bastion"
   location = var.location
   tags     = module.tags.tags
-}
-
-# ---------------------------------------------------------------------------
-# Data source: Find the AKS private DNS zone in the MC_ resource group
-# ---------------------------------------------------------------------------
-# WHY: Private AKS in "System" mode creates a GUID-prefixed DNS zone
-# (e.g., <guid>.privatelink.<region>.azmk8s.io) in the MC_ resource group.
-# We can't hardcode the zone name, so we discover it dynamically by listing
-# all private DNS zones in the MC_ RG and filtering by suffix.
-# ---------------------------------------------------------------------------
-
-data "azurerm_resources" "aks_dns_zones" {
-  resource_group_name = module.aks.node_resource_group
-  type                = "Microsoft.Network/privateDnsZones"
-}
-
-locals {
-  # Filter to find the zone ending with privatelink.<region>.azmk8s.io
-  aks_dns_zone_suffix = "privatelink.${var.location}.azmk8s.io"
-  aks_dns_zone_name = one([
-    for r in data.azurerm_resources.aks_dns_zones.resources :
-    r.name if endswith(r.name, local.aks_dns_zone_suffix)
-  ])
 }
 
 module "bastion" {
@@ -260,10 +302,6 @@ module "bastion" {
   env_vnet_id                  = module.network.vnet_id
   env_vnet_name                = module.network.vnet_name
   env_vnet_resource_group_name = module.rg_core.name
-
-  # Private DNS zone link for AKS API server resolution
-  aks_private_dns_zone_name           = local.aks_dns_zone_name != null ? local.aks_dns_zone_name : ""
-  aks_private_dns_zone_resource_group = local.aks_dns_zone_name != null ? module.aks.node_resource_group : ""
 }
 
 # ---------------------------------------------------------------------------

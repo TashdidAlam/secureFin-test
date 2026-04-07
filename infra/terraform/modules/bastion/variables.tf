@@ -32,21 +32,21 @@ variable "tags" {
 # ---------------------------------------------------------------------------
 
 variable "bastion_vnet_address_space" {
-  description = "Address space for the Bastion VNet (must not overlap with env VNets)"
+  description = "Address space for the Bastion VNet (must not overlap with env VNets or AKS service_cidr)"
   type        = list(string)
-  default     = ["10.1.0.0/16"]
+  default     = ["10.2.0.0/16"]
 }
 
 variable "bastion_subnet_cidr" {
   description = "CIDR for AzureBastionSubnet (minimum /26)"
   type        = string
-  default     = "10.1.0.0/26"
+  default     = "10.2.0.0/26"
 }
 
 variable "jumpbox_subnet_cidr" {
   description = "CIDR for Jump Box subnet"
   type        = string
-  default     = "10.1.1.0/27"
+  default     = "10.2.1.0/27"
 }
 
 # ---------------------------------------------------------------------------
@@ -69,20 +69,8 @@ variable "env_vnet_resource_group_name" {
 }
 
 # ---------------------------------------------------------------------------
-# Private DNS zone link — resolve AKS private endpoint from Jump Box
+# Private DNS zone link — REMOVED (now handled by dns module)
 # ---------------------------------------------------------------------------
-
-variable "aks_private_dns_zone_name" {
-  description = "Name of the AKS private DNS zone (e.g., privatelink.westus3.azmk8s.io)"
-  type        = string
-  default     = ""
-}
-
-variable "aks_private_dns_zone_resource_group" {
-  description = "Resource group containing the AKS private DNS zone (MC_ resource group)"
-  type        = string
-  default     = ""
-}
 
 # ---------------------------------------------------------------------------
 # Jump Box configuration
