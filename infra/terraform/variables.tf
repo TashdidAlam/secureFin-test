@@ -31,7 +31,7 @@ variable "environment" {
 variable "location" {
   description = "Primary Azure region for resource deployment"
   type        = string
-  default     = "westus3"
+  default     = "swedencentral"
 }
 
 variable "project" {

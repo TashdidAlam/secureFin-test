@@ -21,7 +21,7 @@ variable "required_tags" {
 variable "allowed_locations" {
   description = "Azure regions where resources are permitted"
   type        = list(string)
-  default     = ["westus3", "westus"]
+  default     = ["swedencentral", "swedensouth"]
 }
 
 variable "resource_group_ids" {
