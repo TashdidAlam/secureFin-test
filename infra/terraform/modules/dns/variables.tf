@@ -32,7 +32,13 @@ variable "env_vnet_id" {
 }
 
 variable "bastion_vnet_id" {
-  description = "Resource ID of the Bastion VNet to link to the AKS DNS zone (empty string skips)"
+  description = "Resource ID of the Bastion VNet to link to the AKS DNS zone"
   type        = string
   default     = ""
+}
+
+variable "enable_bastion_dns_link" {
+  description = "Whether to create the Bastion VNet DNS link (must be known at plan time)"
+  type        = bool
+  default     = false
 }

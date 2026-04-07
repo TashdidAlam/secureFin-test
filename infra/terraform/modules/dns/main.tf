@@ -56,7 +56,7 @@ resource "azurerm_private_dns_zone_virtual_network_link" "aks_to_env" {
 # ---------------------------------------------------------------------------
 
 resource "azurerm_private_dns_zone_virtual_network_link" "aks_to_bastion" {
-  count = var.bastion_vnet_id != "" ? 1 : 0
+  count = var.enable_bastion_dns_link ? 1 : 0
 
   name                  = "dnslink-aks-to-bastion"
   resource_group_name   = var.resource_group_name

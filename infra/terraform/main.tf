@@ -193,8 +193,9 @@ module "dns" {
   location            = var.location
   environment         = var.environment
   tags                = module.tags.tags
-  env_vnet_id         = module.network.vnet_id
-  bastion_vnet_id     = module.bastion.bastion_vnet_id
+  env_vnet_id             = module.network.vnet_id
+  bastion_vnet_id         = module.bastion.bastion_vnet_id
+  enable_bastion_dns_link = true
 }
 
 # ---------------------------------------------------------------------------
