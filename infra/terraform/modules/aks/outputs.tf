@@ -62,17 +62,11 @@ output "node_resource_group" {
 }
 
 # ---------------------------------------------------------------------------
-# Cluster identity (SystemAssigned)
+# Cluster identity (UserAssigned — created at root level)
 # ---------------------------------------------------------------------------
-# WHY exported: The cluster's SystemAssigned identity may need RBAC
-# assignments on the VNet, subnet, or other resources. The principal_id
-# is required for `azurerm_role_assignment` resources.
+# NOTE: The cluster_identity_principal_id is now available at root level
+# from the azurerm_user_assigned_identity resource, not from this module.
 # ---------------------------------------------------------------------------
-
-output "cluster_identity_principal_id" {
-  description = "Principal ID of the cluster's SystemAssigned managed identity"
-  value       = azurerm_kubernetes_cluster.securefin_aks.identity[0].principal_id
-}
 
 output "kubelet_identity_object_id" {
   description = "Object ID of the kubelet identity (used for ACR pull access)"

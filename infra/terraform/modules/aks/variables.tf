@@ -136,3 +136,30 @@ variable "dns_service_ip" {
   type        = string
   default     = "10.1.0.10"
 }
+
+# -----------------------------------------------------------------------------
+# Private DNS zone (custom)
+# -----------------------------------------------------------------------------
+# WHY: Using our own private DNS zone instead of AKS "System" mode gives us
+# predictable zone names (no GUID prefix), full control over VNet links, and
+# easier multi-environment management. Setting this WILL ForceNew the cluster.
+# -----------------------------------------------------------------------------
+
+variable "private_dns_zone_id" {
+  description = "Resource ID of the private DNS zone for the AKS API server (setting this ForceNew the cluster)"
+  type        = string
+  default     = null
+}
+
+# -----------------------------------------------------------------------------
+# Cluster identity (UserAssigned)
+# -----------------------------------------------------------------------------
+# WHY passed in: The identity is created at root level so RBAC assignments
+# (Network Contributor, Private DNS Zone Contributor) can be applied before
+# the AKS cluster is provisioned. This avoids the chicken-and-egg problem.
+# -----------------------------------------------------------------------------
+
+variable "aks_identity_id" {
+  description = "Resource ID of the UserAssigned managed identity for the AKS cluster"
+  type        = string
+}

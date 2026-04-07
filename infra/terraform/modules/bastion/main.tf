@@ -13,7 +13,8 @@
 # WHY SEPARATE VNet:
 #   - Single Bastion serves ALL environments (dev/staging/prod) — cost optimization
 #   - Each env VNet is peered to the Bastion VNet (hub-spoke pattern)
-#   - Bastion VNet: 10.1.0.0/16 (no overlap with env VNets 10.0.0.0/16)
+#   - Bastion VNet: 10.2.0.0/16 (no overlap with env VNets 10.0.0.0/16
+#     or AKS service_cidr 10.1.0.0/16)
 #   - Separate RG allows independent lifecycle — destroy Bastion without
 #     affecting running workloads
 #
@@ -184,23 +185,12 @@ resource "azurerm_virtual_network_peering" "env_to_bastion" {
 }
 
 # ---------------------------------------------------------------------------
-# Private DNS Zone Link: AKS API server resolution from Bastion VNet
+# Private DNS Zone Link: REMOVED — now handled by the dns module
 # ---------------------------------------------------------------------------
-# WHY: Private AKS creates a DNS zone (privatelink.<region>.azmk8s.io) linked
-# only to the AKS VNet. Without linking it to the Bastion VNet, the Jump Box
-# can't resolve the AKS API server hostname → kubectl fails with DNS errors.
+# The dns module creates VNet links for both the env VNet and Bastion VNet
+# to the AKS private DNS zone. This eliminates the need for the bastion
+# module to discover and link to the System-mode GUID zone.
 # ---------------------------------------------------------------------------
-
-resource "azurerm_private_dns_zone_virtual_network_link" "aks_dns_to_bastion" {
-  count = var.aks_private_dns_zone_name != "" ? 1 : 0
-
-  name                  = "dnslink-bastion-to-aks"
-  resource_group_name   = var.aks_private_dns_zone_resource_group
-  private_dns_zone_name = var.aks_private_dns_zone_name
-  virtual_network_id    = azurerm_virtual_network.bastion_vnet.id
-  registration_enabled  = false
-  tags                  = var.tags
-}
 
 # ---------------------------------------------------------------------------
 # Public IP for Azure Bastion
